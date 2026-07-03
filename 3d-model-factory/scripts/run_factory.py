@@ -137,6 +137,13 @@ def main():
             report_cmd.append(str(product_md))
         optional_call(report_cmd, "create_report")
 
+    if validate_script.exists():
+        optional_call([
+            "python3",
+            str(validate_script),
+            str(stl_path),
+        ], "validate_stl_final")
+
     with (run_dir / "worker_flow_debug.txt").open("a", encoding="utf-8") as f:
         f.write("worker_completed=true\n")
         f.write(f"input_product_md_copy_exists={(run_dir / 'input_product.md').exists()}\n")
