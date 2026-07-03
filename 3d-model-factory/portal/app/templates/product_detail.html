@@ -51,6 +51,46 @@
 
 
 <section class="card">
+  <h3>Validation / Debug</h3>
+  {% set status = validation_status or 'UNKNOWN' %}
+  {% if status == 'PASS' %}
+    {% set badge_bg = '#e7f7ec' %}
+    {% set badge_fg = '#176b35' %}
+    {% set badge_border = '#9bd5ad' %}
+  {% elif status == 'WARN' %}
+    {% set badge_bg = '#fff6df' %}
+    {% set badge_fg = '#8a5a00' %}
+    {% set badge_border = '#e8c66a' %}
+  {% elif status == 'FAIL' %}
+    {% set badge_bg = '#fde8e8' %}
+    {% set badge_fg = '#9b1c1c' %}
+    {% set badge_border = '#f1a4a4' %}
+  {% else %}
+    {% set badge_bg = '#f0f0f0' %}
+    {% set badge_fg = '#444' %}
+    {% set badge_border = '#ccc' %}
+  {% endif %}
+  <p>
+    <strong>Validation Status:</strong>
+    <span style="display: inline-block; padding: 4px 10px; border: 1px solid {{ badge_border }}; background: {{ badge_bg }}; color: {{ badge_fg }};">
+      {{ status }}
+    </span>
+  </p>
+
+  {% for item in debug_texts %}
+  <details {% if item.label == 'validation.txt' %}open{% endif %} style="margin-top: 12px;">
+    <summary>{{ item.label }}{% if not item.exists %} - 파일 없음{% endif %}{% if item.truncated %} - truncated{% endif %}</summary>
+    {% if item.exists %}
+      <pre style="white-space: pre-wrap; overflow-x: auto; border: 1px solid #ddd; padding: 12px; background: #fafafa;">{{ item.content }}</pre>
+    {% else %}
+      <p>파일 없음</p>
+    {% endif %}
+  </details>
+  {% endfor %}
+</section>
+
+
+<section class="card">
   <h3>Preview</h3>
   {% set preview = namespace(url='') %}
   {% for f in files %}

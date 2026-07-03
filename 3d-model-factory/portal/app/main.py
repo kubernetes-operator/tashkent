@@ -27,6 +27,7 @@ NAMESPACE = os.environ.get("NAMESPACE", "model-factory")
 WORKER_IMAGE = os.environ.get("WORKER_IMAGE", "registry.local.cloud:5000/model-factory/blender-worker:latest")
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "/data"))
 PVC_NAME = os.environ.get("PVC_NAME", "model-factory-pvc")
+DEBUG_TEXT_LIMIT = 20000
 
 Base = declarative_base()
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
@@ -255,6 +256,54 @@ def get_db():
 
 def product_base_dir(product_id: str) -> Path:
     return OUTPUT_DIR / "products" / product_id
+
+
+def read_limited_text(path: Path, limit: int = DEBUG_TEXT_LIMIT) -> tuple[str | None, bool]:
+    if not path.exists() or not path.is_file():
+        return None, False
+
+    text_value = path.read_text(encoding="utf-8", errors="replace")
+    if len(text_value) > limit:
+        return text_value[:limit] + "\n... truncated ...", True
+    return text_value, False
+
+
+def collect_debug_texts(product_id: str):
+    base = product_base_dir(product_id)
+    targets = [
+        ("validation.txt", base / "output" / "validation.txt"),
+        ("product.md", base / "input" / "product.md"),
+        ("output_status.txt", base / "output" / "output_status.txt"),
+        ("design_metadata.txt", base / "output" / "design_metadata.txt"),
+        ("worker_flow_debug.txt", base / "output" / "worker_flow_debug.txt"),
+        ("worker_error.txt", base / "output" / "worker_error.txt"),
+        ("shape_intent_debug.txt", base / "output" / "shape_intent_debug.txt"),
+        ("job.log", base / "logs" / "job.log"),
+    ]
+
+    debug_texts = []
+    validation_status = "UNKNOWN"
+    for label, path in targets:
+        try:
+            content, truncated = read_limited_text(path)
+        except Exception as e:
+            content = f"파일 읽기 실패: {repr(e)}"
+            truncated = False
+
+        if label == "validation.txt" and content:
+            for line in content.splitlines():
+                if line.startswith("VALIDATION_STATUS="):
+                    validation_status = line.split("=", 1)[1].strip() or "UNKNOWN"
+                    break
+
+        debug_texts.append({
+            "label": label,
+            "content": content,
+            "truncated": truncated,
+            "exists": content is not None,
+        })
+
+    return debug_texts, validation_status
 
 
 def write_product_md(product: ProductRequest) -> Path:
@@ -630,10 +679,18 @@ def product_detail(request: Request, product_id: str):
             GenerationJob.product_id == product_id
         ).order_by(GenerationJob.created_at.desc()).all()
 
+        debug_texts, validation_status = collect_debug_texts(product_id)
+
         return templates.TemplateResponse(
             name="product_detail.html",
             request=request,
-            context={"product": product, "files": files, "jobs": jobs},
+            context={
+                "product": product,
+                "files": files,
+                "jobs": jobs,
+                "debug_texts": debug_texts,
+                "validation_status": validation_status,
+            },
         )
     finally:
         db.close()
