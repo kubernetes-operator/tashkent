@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse, FileResponse, Plai
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from sqlalchemy import create_engine, Column, String, Text, DateTime, Boolean, Numeric, ForeignKey
+from sqlalchemy import create_engine, Column, String, Text, DateTime, Boolean, Numeric, Integer, ForeignKey, text
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 from kubernetes import client, config
@@ -226,12 +226,27 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
+    ensure_product_request_parameter_columns()
 
     try:
         config.load_incluster_config()
         print("[INFO] Kubernetes incluster config loaded")
     except Exception as e:
         print("[WARN] Kubernetes config load failed:", repr(e))
+
+
+def ensure_product_request_parameter_columns():
+    statements = [
+        "ALTER TABLE product_requests ADD COLUMN IF NOT EXISTS cable_channels integer DEFAULT 1",
+        "ALTER TABLE product_requests ADD COLUMN IF NOT EXISTS cable_diameter_mm numeric DEFAULT 6.0",
+        "ALTER TABLE product_requests ADD COLUMN IF NOT EXISTS magnet_diameter_mm numeric DEFAULT 10.0",
+        "ALTER TABLE product_requests ADD COLUMN IF NOT EXISTS magnet_thickness_mm numeric DEFAULT 2.0",
+        "ALTER TABLE product_requests ADD COLUMN IF NOT EXISTS hinge_count integer DEFAULT 3",
+        "ALTER TABLE product_requests ADD COLUMN IF NOT EXISTS clearance_mm numeric DEFAULT 0.3",
+    ]
+    with engine.begin() as conn:
+        for stmt in statements:
+            conn.execute(text(stmt))
 
 
 def get_db():

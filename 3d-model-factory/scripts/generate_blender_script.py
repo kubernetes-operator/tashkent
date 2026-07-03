@@ -164,7 +164,7 @@ if profile == "custom_hinged_case":
         hinge_positions = [(-w*0.38) + i*((w*0.76)/(hinge_count-1)) for i in range(hinge_count)]
     for i,x in enumerate(hinge_positions,1): cyl("HINGE_BARREL_"+str(i),(x,d/2+2,h*.72),2.6,max(w*.10,8),acc,48,(0,math.radians(90),0))
     cyl("HINGE_PIN",(0,d/2+2,h*.72),1.1,w*.86,dbg,48,(0,math.radians(90),0))
-    notes+=["intent=hinged_case","hinge_barrels=3"]
+    notes+=["intent=hinged_case","hinge_barrels="+str(hinge_count)]
 
 elif profile == "custom_lidded_case":
     wall=max(h*.55,12)
