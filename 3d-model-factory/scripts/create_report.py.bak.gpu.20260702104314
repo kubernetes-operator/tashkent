@@ -1,0 +1,61 @@
+import sys
+from pathlib import Path
+
+run_dir = Path(sys.argv[1])
+
+validation_file = run_dir / "validation.txt"
+
+if validation_file.exists():
+    validation_text = validation_file.read_text(encoding="utf-8")
+else:
+    validation_text = "No validation result."
+
+lines = [
+    "# 3D Model Report",
+    "",
+    "## Product",
+    "",
+    "Bambu Cable Clip Test Model",
+    "",
+    "## Output Files",
+    "",
+    "| File | Description |",
+    "|---|---|",
+    "| model.stl | 3D printable STL |",
+    "| model.blend | Blender source file |",
+    "| validation.txt | Mesh validation report |",
+    "| README.md | Product report |",
+    "",
+    "## Printer Compatibility",
+    "",
+    "| Printer | Target |",
+    "|---|---|",
+    "| Bambu Lab A1 | Yes |",
+    "| Bambu Lab P1S | Yes |",
+    "| Bambu Lab P2S | Yes |",
+    "",
+    "## Recommended Print Settings",
+    "",
+    "| Item | Value |",
+    "|---|---|",
+    "| Material | PLA / PETG |",
+    "| Nozzle | 0.4mm |",
+    "| Layer Height | 0.2mm |",
+    "| Wall Loop | 3 |",
+    "| Infill | 15% |",
+    "| Support | No |",
+    "",
+    "## Validation",
+    "",
+    validation_text,
+    "",
+    "## Next Step",
+    "",
+    "Download model.stl and test slicing in Bambu Studio.",
+    ""
+]
+
+readme_path = run_dir / "README.md"
+readme_path.write_text("\n".join(lines), encoding="utf-8")
+
+print("[INFO] README created:", readme_path)

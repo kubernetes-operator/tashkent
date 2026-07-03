@@ -1,0 +1,55 @@
+pipeline:
+  name: 3D Model Factory Run
+  identifier: model_factory_run
+  projectIdentifier: YOUR_PROJECT
+  orgIdentifier: YOUR_ORG
+  tags: {}
+  stages:
+    - stage:
+        name: Run 3D Model Factory
+        identifier: run_3d_model_factory
+        type: CI
+        spec:
+          cloneCodebase: true
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Apply Base Resources
+                  identifier: apply_base_resources
+                  spec:
+                    shell: Bash
+                    command: |
+                      kubectl apply -f k8s/namespace.yaml
+                      kubectl apply -f k8s/pvc.yaml
+
+              - step:
+                  type: Run
+                  name: Apply OpenAI Secret
+                  identifier: apply_openai_secret
+                  spec:
+                    shell: Bash
+                    command: |
+                      kubectl -n model-factory create secret generic openai-secret \
+                        --from-literal=OPENAI_API_KEY='<+secrets.getValue("openai_api_key")>' \
+                        --dry-run=client -o yaml | kubectl apply -f -
+
+              - step:
+                  type: Run
+                  name: Run Blender Job
+                  identifier: run_blender_job
+                  spec:
+                    shell: Bash
+                    command: |
+                      RUN_ID=$(date +%Y%m%d%H%M%S)
+                      JOB_NAME="model-factory-job-${RUN_ID}"
+
+                      sed "s/name: model-factory-job/name: ${JOB_NAME}/" k8s/job-template.yaml | kubectl apply -f -
+
+                      kubectl wait \
+                        --for=condition=complete \
+                        job/${JOB_NAME} \
+                        -n model-factory \
+                        --timeout=1800s
+
+                      kubectl logs -n model-factory job/${JOB_NAME}

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: model-factory-pvc
+  namespace: model-factory
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-nas-sc-main
+  resources:
+    requests:
+      storage: 100Gi

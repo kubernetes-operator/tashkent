@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: model-portal
+  namespace: model-factory
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: model-portal
+  template:
+    metadata:
+      labels:
+        app: model-portal
+    spec:
+      serviceAccountName: model-portal
+      containers:
+        - name: model-portal
+          image: registry.local.cloud:5000/model-factory/model-portal:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DATABASE_URL
+              value: postgresql://model_factory:model_factory_pw_change_me@postgresql.model-factory.svc.cluster.local:5432/model_factory
+            - name: NAMESPACE
+              value: model-factory
+            - name: WORKER_IMAGE
+              value: registry.local.cloud:5000/model-factory/blender-worker:latest
+            - name: PVC_NAME
+              value: model-factory-pvc
+            - name: OUTPUT_DIR
+              value: /data
+          volumeMounts:
+            - name: model-storage
+              mountPath: /data
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: model-factory-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: model-portal
+  namespace: model-factory
+spec:
+  type: NodePort
+  selector:
+    app: model-portal
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30083

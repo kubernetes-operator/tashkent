@@ -1,0 +1,11 @@
+rules:
+  unit: mm
+  minimum_wall_thickness: 2.0
+  minimum_gap: 0.4
+  preferred_nozzle: 0.4
+  preferred_layer_height: 0.2
+  support_required: false
+  target_printer:
+    - Bambu Lab A1
+    - Bambu Lab P1S
+    - Bambu Lab P2S

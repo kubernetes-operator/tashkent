@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>3D Model Factory</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>3D Model Factory</h1>
+    <nav>
+      <a href="/">제품 목록</a>
+      <a href="/products/new">새 제품 요청</a>
+      <a href="/debug">Debug</a>
+      <a href="/dbcheck">DB Check</a>
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

@@ -1,0 +1,31 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: model-factory-job
+  namespace: model-factory
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: blender-worker
+          image: registry.local.cloud:5000/model-factory/blender-worker:latest
+          imagePullPolicy: Always
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: openai-secret
+                  key: OPENAI_API_KEY
+                  optional: true
+            - name: OUTPUT_DIR
+              value: "/data"
+          volumeMounts:
+            - name: model-storage
+              mountPath: /data
+      volumes:
+        - name: model-storage
+          persistentVolumeClaim:
+            claimName: model-factory-pvc

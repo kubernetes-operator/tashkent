@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h2>제품 요청 목록</h2>
+  <p><a href="/products/new">새 제품 요청 생성</a></p>
+  <table>
+    <thead>
+      <tr>
+        <th>제품명</th>
+        <th>카테고리</th>
+        <th>상태</th>
+        <th>생성일</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in products %}
+      <tr>
+        <td><a href="/products/{{ p.id }}">{{ p.name }}</a></td>
+        <td>{{ p.category }}</td>
+        <td>{{ p.status }}</td>
+        <td>{{ p.created_at }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

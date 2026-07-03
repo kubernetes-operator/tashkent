@@ -1,0 +1,11 @@
+product:
+  category: bambu_accessory
+  name: bambu_cable_clip_test
+  description: Simple cable clip test model for Bambu Lab A1, P1S, P2S.
+  target_printer:
+    - Bambu Lab A1
+    - Bambu Lab P1S
+    - Bambu Lab P2S
+  material:
+    - PLA
+    - PETG

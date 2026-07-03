@@ -1,0 +1,24 @@
+import sys
+from pathlib import Path
+import trimesh
+
+stl = Path(sys.argv[1])
+
+if not stl.exists():
+    raise FileNotFoundError(stl)
+
+mesh = trimesh.load(str(stl), force="mesh")
+
+report = []
+report.append(f"file: {stl}")
+report.append(f"vertices: {len(mesh.vertices)}")
+report.append(f"faces: {len(mesh.faces)}")
+report.append(f"is_watertight: {mesh.is_watertight}")
+report.append(f"bounds: {mesh.bounds.tolist()}")
+report.append(f"volume: {mesh.volume}")
+
+report_path = stl.parent / "validation.txt"
+report_path.write_text("\n".join(report), encoding="utf-8")
+
+print("[INFO] STL validation report created")
+print("\n".join(report))

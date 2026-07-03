@@ -1,0 +1,358 @@
+import os
+import re
+import sys
+from pathlib import Path
+
+
+def read_md(path: str) -> str:
+    if not path:
+        return ""
+    p = Path(path)
+    if not p.exists():
+        print(f"[WARN] PRODUCT_MD not found: {p}")
+        return ""
+    return p.read_text(encoding="utf-8", errors="ignore")
+
+
+def find_value(md: str, key: str, default: str = "") -> str:
+    patterns = [
+        rf"^- {re.escape(key)}:\s*(.+)$",
+        rf"^\|\s*{re.escape(key)}\s*\|\s*(.+?)\s*\|$",
+    ]
+    for pattern in patterns:
+        m = re.search(pattern, md, re.IGNORECASE | re.MULTILINE)
+        if m:
+            return m.group(1).strip()
+    return default
+
+
+def find_number(md: str, key: str, default: float) -> float:
+    value = find_value(md, key, "")
+    m = re.search(r"[-+]?\d+(\.\d+)?", value)
+    if m:
+        return float(m.group(0))
+    return default
+
+
+def bool_value(value: str) -> bool:
+    return str(value).strip().lower() in ["true", "yes", "y", "1", "allowed", "허용"]
+
+
+run_dir = Path(sys.argv[1])
+product_md_path = sys.argv[2] if len(sys.argv) >= 3 else ""
+md = read_md(product_md_path)
+
+name = find_value(md, "Name", "Auto Generated Product")
+category = find_value(md, "Category", "bambu_accessory")
+description = find_value(md, "Description", "")
+shape = find_value(md, "Shape", "rounded rectangular holder")
+surface = find_value(md, "Surface", "matte")
+color = find_value(md, "Color", "black")
+material = find_value(md, "Material", "PETG")
+mount_type = find_value(md, "Mount Type", "hook")
+support_allowed = bool_value(find_value(md, "Support Allowed", "false"))
+
+gpu_enabled = os.environ.get("USE_GPU", "false").lower() == "true"
+gpu_task = os.environ.get("GPU_TASK", "none")
+
+width = find_number(md, "Width", 80.0)
+depth = find_number(md, "Depth", 35.0)
+height = find_number(md, "Height", 25.0)
+
+width = max(30.0, min(width, 220.0))
+depth = max(15.0, min(depth, 160.0))
+height = max(8.0, min(height, 120.0))
+
+base_thickness = max(3.2, min(height * 0.18, 6.0))
+wall_thickness = 3.0
+bevel_amount = 1.5
+
+design_profile = "holder"
+shape_lower = shape.lower()
+mount_lower = mount_type.lower()
+
+if "clip" in shape_lower or "클립" in shape_lower:
+    design_profile = "clip"
+elif "box" in shape_lower or "case" in shape_lower or "박스" in shape_lower or "케이스" in shape_lower:
+    design_profile = "box"
+elif "hook" in mount_lower or "걸이" in mount_lower:
+    design_profile = "hook_holder"
+
+wants_m3 = ("m3" in mount_lower) or ("bolt" in mount_lower) or ("볼트" in mount_lower) or ("나사" in mount_lower)
+
+script = f'''
+import bpy
+import sys
+import math
+from pathlib import Path
+
+argv = sys.argv
+run_dir = Path(argv[argv.index("--") + 1])
+
+PRODUCT = {{
+    "name": {name!r},
+    "category": {category!r},
+    "description": {description!r},
+    "shape": {shape!r},
+    "surface": {surface!r},
+    "color": {color!r},
+    "material": {material!r},
+    "mount_type": {mount_type!r},
+    "support_allowed": {support_allowed!r},
+    "width": {width!r},
+    "depth": {depth!r},
+    "height": {height!r},
+    "design_profile": {design_profile!r},
+    "gpu_enabled": {gpu_enabled!r},
+    "gpu_task": {gpu_task!r},
+    "wants_m3": {wants_m3!r},
+}}
+
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete()
+
+bpy.context.scene.unit_settings.system = "METRIC"
+bpy.context.scene.unit_settings.scale_length = 0.001
+
+def make_mat(name, rgba):
+    mat = bpy.data.materials.new(name)
+    mat.diffuse_color = rgba
+    return mat
+
+mat_default = make_mat("recommended_" + PRODUCT["material"], (0.05, 0.05, 0.05, 1.0))
+mat_marker = make_mat("surface_marker", (0.75, 0.75, 0.75, 1.0))
+
+def add_cube(name, location, dimensions, material=None, bevel=0):
+    bpy.ops.mesh.primitive_cube_add(size=1, location=location)
+    obj = bpy.context.object
+    obj.name = name
+    obj.dimensions = dimensions
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    if material:
+        obj.data.materials.append(material)
+    if bevel > 0:
+        mod = obj.modifiers.new(name="small_bevel", type="BEVEL")
+        mod.width = bevel
+        mod.segments = 4
+        mod.affect = "EDGES"
+        obj.modifiers.new(name="weighted_normals", type="WEIGHTED_NORMAL")
+    return obj
+
+def add_cylinder(name, location, radius, depth, material=None, vertices=64, rotation=(0,0,0)):
+    bpy.ops.mesh.primitive_cylinder_add(vertices=vertices, radius=radius, depth=depth, location=location, rotation=rotation)
+    obj = bpy.context.object
+    obj.name = name
+    if material:
+        obj.data.materials.append(material)
+    obj.modifiers.new(name="weighted_normals", type="WEIGHTED_NORMAL")
+    return obj
+
+def boolean_difference(target, cutter, apply=True):
+    mod = target.modifiers.new(name="bool_cut_" + cutter.name, type="BOOLEAN")
+    mod.operation = "DIFFERENCE"
+    mod.object = cutter
+    try:
+        mod.solver = "FAST"
+    except Exception:
+        pass
+    bpy.context.view_layer.objects.active = target
+    target.select_set(True)
+    if apply:
+        try:
+            bpy.ops.object.modifier_apply(modifier=mod.name)
+            bpy.data.objects.remove(cutter, do_unlink=True)
+        except Exception as e:
+            print("[WARN] boolean apply failed:", target.name, cutter.name, repr(e))
+    return mod
+
+def add_text(name, text, location, size, material=None):
+    bpy.ops.object.text_add(location=location, rotation=(0, 0, 0))
+    obj = bpy.context.object
+    obj.name = name
+    obj.data.body = text
+    obj.data.align_x = "CENTER"
+    obj.data.align_y = "CENTER"
+    obj.data.size = size
+    obj.data.extrude = 0.4
+    if material:
+        obj.data.materials.append(material)
+    return obj
+
+w = PRODUCT["width"]
+d = PRODUCT["depth"]
+h = PRODUCT["height"]
+base_t = {base_thickness!r}
+wall_t = {wall_thickness!r}
+bevel = {bevel_amount!r}
+profile = PRODUCT["design_profile"]
+
+solid_targets = []
+base = add_cube("base_plate", (0, 0, base_t / 2), (w, d, base_t), mat_default, bevel)
+solid_targets.append(base)
+
+if profile == "clip":
+    wall_h = max(h - base_t, 10)
+    gap = max(d * 0.45, 8)
+    side_x = w * 0.32
+    solid_targets.append(add_cube("left_wall", (-side_x, 0, base_t + wall_h / 2), (wall_t * 2, gap, wall_h), mat_default, bevel))
+    solid_targets.append(add_cube("right_wall", (side_x, 0, base_t + wall_h / 2), (wall_t * 2, gap, wall_h), mat_default, bevel))
+    solid_targets.append(add_cube("top_bridge", (0, 0, base_t + wall_h + wall_t / 2), (side_x * 2 + wall_t * 2, gap, wall_t), mat_default, bevel))
+elif profile == "box":
+    wall_h = max(h - base_t, 10)
+    solid_targets.append(add_cube("back_wall", (0, d / 2 - wall_t / 2, base_t + wall_h / 2), (w, wall_t, wall_h), mat_default, bevel))
+    solid_targets.append(add_cube("front_lip", (0, -d / 2 + wall_t / 2, base_t + min(wall_h, 10) / 2), (w, wall_t, min(wall_h, 10)), mat_default, bevel))
+    solid_targets.append(add_cube("left_wall", (-w / 2 + wall_t / 2, 0, base_t + wall_h / 2), (wall_t, d, wall_h), mat_default, bevel))
+    solid_targets.append(add_cube("right_wall", (w / 2 - wall_t / 2, 0, base_t + wall_h / 2), (wall_t, d, wall_h), mat_default, bevel))
+elif profile == "hook_holder":
+    solid_targets.append(add_cube("vertical_back_plate", (0, d / 2 - wall_t / 2, h / 2), (w, wall_t, h), mat_default, bevel))
+    hook_depth = max(d * 0.6, 15)
+    solid_targets.append(add_cube("lower_hook_shelf", (0, -hook_depth / 4, base_t + 2), (w * 0.85, hook_depth, base_t), mat_default, bevel))
+    solid_targets.append(add_cube("front_retainer_lip", (0, -hook_depth / 2, base_t + 8), (w * 0.85, wall_t, 12), mat_default, bevel))
+else:
+    rail_h = max(h * 0.45, 10)
+    solid_targets.append(add_cube("left_rail", (-w / 2 + wall_t / 2, 0, base_t + rail_h / 2), (wall_t, d, rail_h), mat_default, bevel))
+    solid_targets.append(add_cube("right_rail", (w / 2 - wall_t / 2, 0, base_t + rail_h / 2), (wall_t, d, rail_h), mat_default, bevel))
+    solid_targets.append(add_cube("back_stop", (0, d / 2 - wall_t / 2, base_t + rail_h / 2), (w, wall_t, rail_h), mat_default, bevel))
+
+hole_report = []
+if PRODUCT["wants_m3"]:
+    # M3 clearance: 3.4mm diameter -> radius 1.7mm.
+    # Counterbore visual/shallow functional recess: 6.2mm diameter, 1.2mm depth.
+    # Holes are vertical through base plate.
+    hole_positions = [(-w * 0.30, 0), (w * 0.30, 0)]
+    for idx, (x, y) in enumerate(hole_positions, start=1):
+        through = add_cylinder("m3_clearance_cutter_" + str(idx), (x, y, base_t / 2), 1.7, base_t + 2.0, None, 72)
+        boolean_difference(base, through, apply=True)
+        recess = add_cylinder("m3_counterbore_cutter_" + str(idx), (x, y, base_t - 0.55), 3.1, 1.4, None, 72)
+        boolean_difference(base, recess, apply=True)
+        # Non-cut visual ring marker
+        ring = add_cylinder("m3_hole_ring_" + str(idx), (x, y, base_t + 0.08), 3.3, 0.15, mat_marker, 72)
+        hole_report.append("M3 clearance hole " + str(idx) + ": diameter=3.4mm, counterbore=6.2mm x 1.4mm, position=(" + str(round(x,2)) + "," + str(round(y,2)) + ")")
+
+if "grid" in PRODUCT["surface"].lower() or "격자" in PRODUCT["surface"].lower():
+    for i in range(5):
+        x = -w * 0.35 + i * (w * 0.7 / 4)
+        add_cube("surface_grid_x_" + str(i), (x, 0, base_t + 0.25), (0.7, d * 0.75, 0.5), mat_marker, 0)
+    for j in range(3):
+        y = -d * 0.25 + j * (d * 0.5 / 2)
+        add_cube("surface_grid_y_" + str(j), (0, y, base_t + 0.3), (w * 0.75, 0.7, 0.5), mat_marker, 0)
+
+add_text("product_label", PRODUCT["name"][:18], (0, -d * 0.35, base_t + 0.7), max(min(w / 15, 6), 3), mat_marker)
+
+metadata_path = run_dir / "design_metadata.txt"
+metadata_path.write_text("\\n".join([
+    "name=" + PRODUCT["name"],
+    "category=" + PRODUCT["category"],
+    "shape=" + PRODUCT["shape"],
+    "surface=" + PRODUCT["surface"],
+    "color=" + PRODUCT["color"],
+    "material=" + PRODUCT["material"],
+    "mount_type=" + PRODUCT["mount_type"],
+    "support_allowed=" + str(PRODUCT["support_allowed"]),
+    "width_mm=" + str(PRODUCT["width"]),
+    "depth_mm=" + str(PRODUCT["depth"]),
+    "height_mm=" + str(PRODUCT["height"]),
+    "base_thickness_mm=" + str(base_t),
+    "wall_thickness_mm=" + str(wall_t),
+    "bevel_mm=" + str(bevel),
+    "design_profile=" + PRODUCT["design_profile"],
+    "gpu_enabled=" + str(PRODUCT["gpu_enabled"]),
+    "gpu_task=" + PRODUCT["gpu_task"],
+    "boolean_holes=" + ("yes" if hole_report else "no"),
+    *hole_report,
+]), encoding="utf-8")
+
+# Preview lighting / camera
+bpy.ops.object.light_add(type="AREA", location=(0, -120, 160))
+light = bpy.context.object
+light.name = "preview_area_light"
+light.data.energy = 500
+light.data.size = 80
+
+bpy.ops.object.camera_add(location=(w * 0.85, -max(d * 2.6, 90), max(h * 1.8, 60)), rotation=(1.1, 0, 0.42))
+camera = bpy.context.object
+bpy.context.scene.camera = camera
+
+bpy.context.scene.render.resolution_x = 1200
+bpy.context.scene.render.resolution_y = 900
+
+render_mode = "CPU"
+try:
+    bpy.context.scene.render.engine = "CYCLES"
+    if PRODUCT["gpu_enabled"]:
+        prefs = bpy.context.preferences
+        cycles_prefs = prefs.addons["cycles"].preferences
+        for backend in ["OPTIX", "CUDA"]:
+            try:
+                cycles_prefs.compute_device_type = backend
+                cycles_prefs.get_devices()
+                for device in cycles_prefs.devices:
+                    device.use = True
+                bpy.context.scene.cycles.device = "GPU"
+                render_mode = "GPU:" + backend
+                break
+            except Exception:
+                continue
+    bpy.context.scene.cycles.samples = 64
+except Exception as e:
+    print("[WARN] GPU/Cycles setup failed:", repr(e))
+    try:
+        bpy.context.scene.render.engine = "BLENDER_EEVEE_NEXT"
+    except Exception:
+        pass
+    render_mode = "CPU_OR_EEVEE"
+
+bpy.ops.object.select_all(action="SELECT")
+
+stl_path = str(run_dir / "model.stl")
+blend_path = str(run_dir / "model.blend")
+preview_path = str(run_dir / "preview.png")
+
+try:
+    bpy.ops.wm.stl_export(filepath=stl_path)
+except Exception:
+    bpy.ops.export_mesh.stl(filepath=stl_path)
+
+bpy.ops.wm.save_as_mainfile(filepath=blend_path)
+
+preview_status = "not_rendered"
+try:
+    bpy.context.scene.render.filepath = preview_path
+    bpy.ops.render.render(write_still=True)
+    preview_status = "rendered:" + render_mode
+    print("[INFO] Preview rendered:", preview_path, "mode:", render_mode)
+except Exception as e:
+    preview_status = "failed:" + repr(e)
+    print("[WARN] Preview render failed:", repr(e))
+
+status_path = run_dir / "output_status.txt"
+status_path.write_text("\\n".join([
+    "stl_path=" + stl_path,
+    "blend_path=" + blend_path,
+    "preview_path=" + preview_path,
+    "preview_status=" + preview_status,
+    "render_mode=" + render_mode,
+    "boolean_holes=" + ("yes" if hole_report else "no"),
+]), encoding="utf-8")
+
+print("[INFO] Product:", PRODUCT["name"])
+print("[INFO] Profile:", PRODUCT["design_profile"])
+print("[INFO] Dimensions:", w, d, h)
+print("[INFO] Boolean holes:", "yes" if hole_report else "no")
+print("[INFO] Render mode:", render_mode)
+print("[INFO] STL exported:", stl_path)
+print("[INFO] BLEND saved:", blend_path)
+'''
+
+Path("/workspace/blender/generated_model.py").write_text(script, encoding="utf-8")
+
+print("[INFO] Blender script generated from product.md")
+print(f"[INFO] name={name}")
+print(f"[INFO] category={category}")
+print(f"[INFO] shape={shape}")
+print(f"[INFO] material={material}")
+print(f"[INFO] dimensions={width} x {depth} x {height} mm")
+print(f"[INFO] gpu_enabled={gpu_enabled}")
+print(f"[INFO] gpu_task={gpu_task}")
+print(f"[INFO] design_profile={design_profile}")
+print(f"[INFO] wants_m3={wants_m3}")

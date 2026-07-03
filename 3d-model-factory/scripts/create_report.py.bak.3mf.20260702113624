@@ -1,0 +1,73 @@
+import sys
+from pathlib import Path
+
+run_dir = Path(sys.argv[1])
+product_md = Path(sys.argv[2]) if len(sys.argv) >= 3 and sys.argv[2] else None
+
+validation_file = run_dir / "validation.txt"
+metadata_file = run_dir / "design_metadata.txt"
+
+validation_text = validation_file.read_text(encoding="utf-8") if validation_file.exists() else "No validation result."
+metadata_text = metadata_file.read_text(encoding="utf-8") if metadata_file.exists() else "No design metadata."
+
+product_md_text = ""
+if product_md and product_md.exists():
+    product_md_text = product_md.read_text(encoding="utf-8", errors="ignore")
+
+preview_exists = (run_dir / "preview.png").exists()
+
+lines = [
+    "# 3D Model Report",
+    "",
+    "## Generation Result",
+    "",
+    "| File | Description |",
+    "|---|---|",
+    "| model.stl | 3D printable STL |",
+    "| model.blend | Blender source file |",
+    "| preview.png | Rendered preview image |" if preview_exists else "| preview.png | Not generated |",
+    "| validation.txt | Mesh validation report |",
+    "| design_metadata.txt | Parsed design metadata |",
+    "| README.md | Product report |",
+    "",
+    "## Design Metadata",
+    "",
+    metadata_text,
+    "",
+    "## Recommended Print Settings",
+    "",
+    "| Item | Value |",
+    "|---|---|",
+    "| Material | See design_metadata.txt |",
+    "| Nozzle | 0.4mm |",
+    "| Layer Height | 0.2mm |",
+    "| Wall Loop | 3 |",
+    "| Infill | 15% |",
+    "| Support | Prefer No |",
+    "",
+    "## Validation",
+    "",
+    validation_text,
+    "",
+]
+
+if product_md_text:
+    lines.extend([
+        "## Original Product Request",
+        "",
+        product_md_text,
+        "",
+    ])
+
+lines.extend([
+    "## Next Step",
+    "",
+    "Download model.stl and test slicing in Bambu Studio.",
+    "Use preview.png for visual inspection only.",
+    "",
+])
+
+readme_path = run_dir / "README.md"
+readme_path.write_text("\n".join(lines), encoding="utf-8")
+
+print("[INFO] README created:", readme_path)

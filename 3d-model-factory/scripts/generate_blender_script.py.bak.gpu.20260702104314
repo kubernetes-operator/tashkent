@@ -1,0 +1,80 @@
+import sys
+from pathlib import Path
+
+run_dir = Path(sys.argv[1])
+
+script = r'''
+import bpy
+import sys
+from pathlib import Path
+
+argv = sys.argv
+run_dir = Path(argv[argv.index("--") + 1])
+
+bpy.ops.object.select_all(action="SELECT")
+bpy.ops.object.delete()
+
+def add_cube(name, location, dimensions):
+    bpy.ops.mesh.primitive_cube_add(size=1, location=location)
+    obj = bpy.context.object
+    obj.name = name
+    obj.dimensions = dimensions
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    return obj
+
+base = add_cube(
+    "base_plate",
+    location=(0, 0, 2),
+    dimensions=(60, 22, 4)
+)
+
+left_wall = add_cube(
+    "left_wall",
+    location=(-18, 0, 11),
+    dimensions=(6, 10, 18)
+)
+
+right_wall = add_cube(
+    "right_wall",
+    location=(18, 0, 11),
+    dimensions=(6, 10, 18)
+)
+
+top_bridge = add_cube(
+    "top_bridge",
+    location=(0, 0, 21),
+    dimensions=(42, 10, 4)
+)
+
+add_cube(
+    "m3_marker_left",
+    location=(-22, 0, 4.5),
+    dimensions=(5, 5, 1)
+)
+
+add_cube(
+    "m3_marker_right",
+    location=(22, 0, 4.5),
+    dimensions=(5, 5, 1)
+)
+
+bpy.ops.object.select_all(action="SELECT")
+
+stl_path = str(run_dir / "model.stl")
+blend_path = str(run_dir / "model.blend")
+
+try:
+    bpy.ops.wm.stl_export(filepath=stl_path)
+except Exception:
+    bpy.ops.export_mesh.stl(filepath=stl_path)
+
+bpy.ops.wm.save_as_mainfile(filepath=blend_path)
+
+print("[INFO] STL exported:", stl_path)
+print("[INFO] BLEND saved:", blend_path)
+'''
+
+Path("/workspace/blender/generated_model.py").write_text(script, encoding="utf-8")
+
+print("[INFO] Blender script generated")
+print(f"[INFO] Target run dir: {run_dir}")
