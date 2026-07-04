@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h2>프리셋 관리</h2>
+  <p>
+    <a href="/presets/new">새 프리셋 추가</a>
+    |
+    <a href="/products/new">새 제품 요청으로 돌아가기</a>
+  </p>
+
+  {% if presets %}
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Label</th>
+        <th>Category</th>
+        <th>Material</th>
+        <th>Dimensions</th>
+        <th>Active</th>
+        <th>Updated</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for preset in presets %}
+      <tr>
+        <td>{{ preset.id }}</td>
+        <td>{{ preset.label }}</td>
+        <td>{{ preset.category }}</td>
+        <td>{{ preset.material }}</td>
+        <td>{{ preset.width_mm }} x {{ preset.depth_mm }} x {{ preset.height_mm }} mm</td>
+        <td>{{ preset.is_active }}</td>
+        <td>{{ preset.updated_at }}</td>
+        <td>
+          <a href="/presets/{{ preset.id }}/edit">수정</a>
+          {% if preset.is_active %}
+          <form method="post" action="/presets/{{ preset.id }}/delete" style="display: inline;">
+            <button type="submit">비활성화</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p>등록된 프리셋이 없습니다.</p>
+  {% endif %}
+</section>
+{% endblock %}

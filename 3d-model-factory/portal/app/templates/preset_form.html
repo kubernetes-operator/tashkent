@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+{% block content %}
+{% set targets = preset.printer_targets if preset else '- Bambu Lab A1\n- Bambu Lab P1S\n- Bambu Lab P2S' %}
+<section class="card">
+  <h2>{% if mode == 'new' %}새 프리셋 추가{% else %}프리셋 수정{% endif %}</h2>
+
+  <form method="post" action="{{ action }}">
+    <label>프리셋 ID</label>
+    {% if mode == 'new' %}
+      <input name="preset_id" required placeholder="desk_hook_large">
+    {% else %}
+      <input value="{{ preset.id }}" disabled>
+    {% endif %}
+
+    <label>라벨</label>
+    <input name="label" required value="{{ preset.label if preset else '' }}">
+
+    <label>카테고리</label>
+    <select name="category">
+      {% set current_category = preset.category if preset else '' %}
+      <option value="bambu_accessory" {% if current_category == 'bambu_accessory' %}selected{% endif %}>Bambu 액세서리</option>
+      <option value="homelab_accessory" {% if current_category == 'homelab_accessory' %}selected{% endif %}>홈랩 액세서리</option>
+      <option value="cable_management" {% if current_category == 'cable_management' %}selected{% endif %}>케이블 정리</option>
+      <option value="battery_case" {% if current_category == 'battery_case' %}selected{% endif %}>배터리 케이스</option>
+      <option value="desk_organizer" {% if current_category == 'desk_organizer' %}selected{% endif %}>책상 정리</option>
+    </select>
+
+    <label>설명</label>
+    <textarea name="description" rows="4">{{ preset.description if preset else '' }}</textarea>
+
+    <div class="grid3">
+      <div>
+        <label>가로 mm</label>
+        <input name="width_mm" type="number" step="0.1" value="{{ preset.width_mm if preset else '' }}">
+      </div>
+      <div>
+        <label>세로/깊이 mm</label>
+        <input name="depth_mm" type="number" step="0.1" value="{{ preset.depth_mm if preset else '' }}">
+      </div>
+      <div>
+        <label>높이 mm</label>
+        <input name="height_mm" type="number" step="0.1" value="{{ preset.height_mm if preset else '' }}">
+      </div>
+    </div>
+
+    <label>형태</label>
+    <input name="shape" value="{{ preset.shape if preset else '' }}">
+
+    <label>색상</label>
+    <input name="color" value="{{ preset.color if preset else '' }}">
+
+    <label>표면</label>
+    <input name="surface" value="{{ preset.surface if preset else '' }}">
+
+    {% set current_material = preset.material if preset else 'PETG' %}
+    <label>재료</label>
+    <select name="material">
+      <option value="PLA" {% if current_material == 'PLA' %}selected{% endif %}>PLA</option>
+      <option value="PETG" {% if current_material == 'PETG' %}selected{% endif %}>PETG</option>
+      <option value="ASA" {% if current_material == 'ASA' %}selected{% endif %}>ASA</option>
+      <option value="ABS" {% if current_material == 'ABS' %}selected{% endif %}>ABS</option>
+      <option value="TPU" {% if current_material == 'TPU' %}selected{% endif %}>TPU</option>
+    </select>
+
+    <label>고정 방식</label>
+    <input name="mount_type" value="{{ preset.mount_type if preset else '' }}">
+
+    <label>
+      <input type="checkbox" name="support_allowed" value="true" {% if preset and preset.support_allowed %}checked{% endif %}>
+      서포트 허용
+    </label>
+
+    <label>
+      <input type="checkbox" name="use_gpu" value="true" {% if preset and preset.use_gpu %}checked{% endif %}>
+      GPU Preview 렌더링 사용
+    </label>
+
+    {% set current_gpu_task = preset.gpu_task if preset else 'none' %}
+    <label>GPU 작업</label>
+    <select name="gpu_task">
+      <option value="none" {% if current_gpu_task == 'none' %}selected{% endif %}>사용 안 함</option>
+      <option value="preview" {% if current_gpu_task == 'preview' %}selected{% endif %}>Preview 렌더링</option>
+      <option value="ai_design" {% if current_gpu_task == 'ai_design' %}selected{% endif %}>AI 디자인 보조</option>
+      <option value="preview,ai_design" {% if current_gpu_task == 'preview,ai_design' %}selected{% endif %}>Preview + AI 디자인 보조</option>
+    </select>
+
+    <h3>세부 파라미터</h3>
+    <div class="grid3">
+      <div>
+        <label>케이블 구 수</label>
+        <input name="cable_channels" type="number" min="1" max="6" value="{{ preset.cable_channels if preset else 1 }}">
+      </div>
+      <div>
+        <label>케이블 직경 mm</label>
+        <input name="cable_diameter_mm" type="number" step="0.1" value="{{ preset.cable_diameter_mm if preset else 6.0 }}">
+      </div>
+      <div>
+        <label>여유 공차 mm</label>
+        <input name="clearance_mm" type="number" step="0.1" value="{{ preset.clearance_mm if preset else 0.3 }}">
+      </div>
+    </div>
+
+    <div class="grid3">
+      <div>
+        <label>자석 직경 mm</label>
+        <input name="magnet_diameter_mm" type="number" step="0.1" value="{{ preset.magnet_diameter_mm if preset else 10.0 }}">
+      </div>
+      <div>
+        <label>자석 두께 mm</label>
+        <input name="magnet_thickness_mm" type="number" step="0.1" value="{{ preset.magnet_thickness_mm if preset else 2.0 }}">
+      </div>
+      <div>
+        <label>힌지 개수</label>
+        <input name="hinge_count" type="number" min="1" max="8" value="{{ preset.hinge_count if preset else 3 }}">
+      </div>
+    </div>
+
+    <label>대상 프린터</label>
+    <div class="checks">
+      <label><input type="checkbox" name="printer_targets" value="Bambu Lab A1" {% if 'Bambu Lab A1' in targets %}checked{% endif %}> Bambu Lab A1</label>
+      <label><input type="checkbox" name="printer_targets" value="Bambu Lab P1S" {% if 'Bambu Lab P1S' in targets %}checked{% endif %}> Bambu Lab P1S</label>
+      <label><input type="checkbox" name="printer_targets" value="Bambu Lab P2S" {% if 'Bambu Lab P2S' in targets %}checked{% endif %}> Bambu Lab P2S</label>
+    </div>
+
+    <button type="submit">{% if mode == 'new' %}프리셋 생성{% else %}프리셋 저장{% endif %}</button>
+    <p><a href="/presets">프리셋 목록으로 돌아가기</a></p>
+  </form>
+</section>
+{% endblock %}

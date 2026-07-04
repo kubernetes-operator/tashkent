@@ -70,6 +70,36 @@ class ProductRequest(Base):
     jobs = relationship("GenerationJob", back_populates="product")
 
 
+class ProductPreset(Base):
+    __tablename__ = "product_presets"
+
+    id = Column(String, primary_key=True)
+    label = Column(String, nullable=False)
+    category = Column(String)
+    description = Column(Text)
+    width_mm = Column(Numeric)
+    depth_mm = Column(Numeric)
+    height_mm = Column(Numeric)
+    shape = Column(String)
+    color = Column(String)
+    surface = Column(String)
+    material = Column(String)
+    mount_type = Column(String)
+    support_allowed = Column(Boolean, default=False)
+    printer_targets = Column(Text)
+    use_gpu = Column(Boolean, default=False)
+    gpu_task = Column(String, default="none")
+    cable_channels = Column(Integer, default=1)
+    cable_diameter_mm = Column(Numeric, default=6.0)
+    magnet_diameter_mm = Column(Numeric, default=10.0)
+    magnet_thickness_mm = Column(Numeric, default=2.0)
+    hinge_count = Column(Integer, default=3)
+    clearance_mm = Column(Numeric, default=0.3)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ProductFile(Base):
     __tablename__ = "product_files"
 
@@ -99,7 +129,7 @@ class GenerationJob(Base):
 
 app = FastAPI(title="3D Model Factory Portal")
 
-PRODUCT_PRESETS = [
+DEFAULT_PRODUCT_PRESETS = [
     {
         "id": "custom",
         "label": "직접 입력",
@@ -231,6 +261,7 @@ def startup():
     Base.metadata.create_all(bind=engine)
     ensure_product_request_parameter_columns()
     ensure_generation_job_run_columns()
+    seed_default_presets_if_empty()
 
     try:
         config.load_incluster_config()
@@ -265,6 +296,118 @@ def ensure_generation_job_run_columns():
 
 def get_db():
     return SessionLocal()
+
+
+def preset_custom_dict() -> dict:
+    return {
+        "id": "custom",
+        "label": "직접 입력",
+        "category": "",
+        "description": "",
+        "width_mm": "",
+        "depth_mm": "",
+        "height_mm": "",
+        "shape": "",
+        "color": "",
+        "surface": "",
+        "material": "PETG",
+        "mount_type": "",
+        "support_allowed": False,
+        "printer_targets": "",
+        "use_gpu": False,
+        "gpu_task": "none",
+        "cable_channels": 1,
+        "cable_diameter_mm": 6.0,
+        "magnet_diameter_mm": 10.0,
+        "magnet_thickness_mm": 2.0,
+        "hinge_count": 3,
+        "clearance_mm": 0.3,
+    }
+
+
+def number_or_empty(value):
+    if value is None:
+        return ""
+    return float(value)
+
+
+def preset_to_dict(preset: ProductPreset) -> dict:
+    return {
+        "id": preset.id,
+        "label": preset.label,
+        "category": preset.category or "",
+        "description": preset.description or "",
+        "width_mm": number_or_empty(preset.width_mm),
+        "depth_mm": number_or_empty(preset.depth_mm),
+        "height_mm": number_or_empty(preset.height_mm),
+        "shape": preset.shape or "",
+        "color": preset.color or "",
+        "surface": preset.surface or "",
+        "material": preset.material or "PETG",
+        "mount_type": preset.mount_type or "",
+        "support_allowed": bool(preset.support_allowed),
+        "printer_targets": preset.printer_targets or "",
+        "use_gpu": bool(preset.use_gpu),
+        "gpu_task": preset.gpu_task or "none",
+        "cable_channels": preset.cable_channels or 1,
+        "cable_diameter_mm": number_or_empty(preset.cable_diameter_mm) or 6.0,
+        "magnet_diameter_mm": number_or_empty(preset.magnet_diameter_mm) or 10.0,
+        "magnet_thickness_mm": number_or_empty(preset.magnet_thickness_mm) or 2.0,
+        "hinge_count": preset.hinge_count or 3,
+        "clearance_mm": number_or_empty(preset.clearance_mm) or 0.3,
+    }
+
+
+def active_preset_dicts(db, include_custom: bool = True) -> list[dict]:
+    presets = db.query(ProductPreset).filter(
+        ProductPreset.is_active == True
+    ).order_by(ProductPreset.label.asc()).all()
+    result = [preset_to_dict(preset) for preset in presets]
+    if include_custom:
+        return [preset_custom_dict()] + result
+    return result
+
+
+def seed_default_presets_if_empty():
+    db = get_db()
+    try:
+        if db.query(ProductPreset).count() > 0:
+            return
+
+        for data in DEFAULT_PRODUCT_PRESETS:
+            if data["id"] == "custom":
+                continue
+            db.add(ProductPreset(
+                id=data["id"],
+                label=data["label"],
+                category=data.get("category") or "",
+                description=data.get("description") or "",
+                width_mm=data.get("width_mm") or None,
+                depth_mm=data.get("depth_mm") or None,
+                height_mm=data.get("height_mm") or None,
+                shape=data.get("shape") or "",
+                color=data.get("color") or "",
+                surface=data.get("surface") or "",
+                material=data.get("material") or "PETG",
+                mount_type=data.get("mount_type") or "",
+                support_allowed=bool(data.get("support_allowed")),
+                printer_targets=data.get("printer_targets") or "- Bambu Lab A1\n- Bambu Lab P1S\n- Bambu Lab P2S",
+                use_gpu=bool(data.get("use_gpu")),
+                gpu_task=data.get("gpu_task") or "none",
+                cable_channels=data.get("cable_channels") or 1,
+                cable_diameter_mm=data.get("cable_diameter_mm") or 6.0,
+                magnet_diameter_mm=data.get("magnet_diameter_mm") or 10.0,
+                magnet_thickness_mm=data.get("magnet_thickness_mm") or 2.0,
+                hinge_count=data.get("hinge_count") or 3,
+                clearance_mm=data.get("clearance_mm") or 0.3,
+                is_active=True,
+            ))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print("[WARN] failed to seed product presets:", repr(e))
+    finally:
+        db.close()
 
 
 def product_base_dir(product_id: str) -> Path:
@@ -626,6 +769,54 @@ def update_product_from_form(
     product.updated_at = datetime.utcnow()
 
 
+def update_preset_from_form(
+    preset: ProductPreset,
+    label: str,
+    category: str,
+    description: str,
+    width_mm: float | None,
+    depth_mm: float | None,
+    height_mm: float | None,
+    shape: str,
+    color: str,
+    surface: str,
+    material: str,
+    mount_type: str,
+    support_allowed: str | None,
+    printer_targets: list[str],
+    use_gpu: str | None,
+    gpu_task: str,
+    cable_channels: int,
+    cable_diameter_mm: float,
+    magnet_diameter_mm: float,
+    magnet_thickness_mm: float,
+    hinge_count: int,
+    clearance_mm: float,
+) -> None:
+    preset.label = label
+    preset.category = category
+    preset.description = description
+    preset.width_mm = width_mm
+    preset.depth_mm = depth_mm
+    preset.height_mm = height_mm
+    preset.shape = shape
+    preset.color = color
+    preset.surface = surface
+    preset.material = material
+    preset.mount_type = mount_type
+    preset.support_allowed = (support_allowed == "true")
+    preset.printer_targets = "\n".join([f"- {p}" for p in printer_targets])
+    preset.use_gpu = (use_gpu == "true")
+    preset.gpu_task = gpu_task
+    preset.cable_channels = cable_channels
+    preset.cable_diameter_mm = cable_diameter_mm
+    preset.magnet_diameter_mm = magnet_diameter_mm
+    preset.magnet_thickness_mm = magnet_thickness_mm
+    preset.hinge_count = hinge_count
+    preset.clearance_mm = clearance_mm
+    preset.updated_at = datetime.utcnow()
+
+
 def create_blender_job(product_id: str, product_obj=None, run_number: int = 1) -> str:
     current_product_for_job = product_obj
     batch = client.BatchV1Api()
@@ -740,7 +931,11 @@ def refresh_product_status(db, product: ProductRequest):
 
 @app.get("/api/presets")
 def api_presets():
-    return {"presets": PRODUCT_PRESETS}
+    db = get_db()
+    try:
+        return {"presets": active_preset_dicts(db, include_custom=True)}
+    finally:
+        db.close()
 
 @app.get("/healthz")
 def healthz():
@@ -806,9 +1001,217 @@ def index(request: Request):
         db.close()
 
 
+@app.get("/presets", response_class=HTMLResponse)
+def presets_index(request: Request):
+    db = get_db()
+    try:
+        presets = db.query(ProductPreset).order_by(
+            ProductPreset.is_active.desc(),
+            ProductPreset.label.asc(),
+        ).all()
+        return templates.TemplateResponse(
+            name="presets.html",
+            request=request,
+            context={
+                "presets": presets,
+            },
+        )
+    finally:
+        db.close()
+
+
+@app.get("/presets/new", response_class=HTMLResponse)
+def new_preset(request: Request):
+    return templates.TemplateResponse(
+        name="preset_form.html",
+        request=request,
+        context={
+            "mode": "new",
+            "preset": None,
+            "action": "/presets",
+            "error": "",
+        },
+    )
+
+
+@app.post("/presets")
+def create_preset(
+    preset_id: str = Form(...),
+    label: str = Form(...),
+    category: str = Form(""),
+    description: str = Form(""),
+    width_mm: float | None = Form(None),
+    depth_mm: float | None = Form(None),
+    height_mm: float | None = Form(None),
+    shape: str = Form(""),
+    color: str = Form(""),
+    surface: str = Form(""),
+    material: str = Form("PETG"),
+    mount_type: str = Form(""),
+    support_allowed: str | None = Form(None),
+    printer_targets: list[str] = Form([]),
+    use_gpu: str | None = Form(None),
+    gpu_task: str = Form("none"),
+    cable_channels: int = Form(1),
+    cable_diameter_mm: float = Form(6.0),
+    magnet_diameter_mm: float = Form(10.0),
+    magnet_thickness_mm: float = Form(2.0),
+    hinge_count: int = Form(3),
+    clearance_mm: float = Form(0.3),
+):
+    clean_id = preset_id.strip()
+    if not clean_id or clean_id == "custom" or "/" in clean_id:
+        raise HTTPException(status_code=400, detail="Invalid preset id")
+
+    db = get_db()
+    try:
+        existing = db.query(ProductPreset).filter(ProductPreset.id == clean_id).first()
+        if existing:
+            raise HTTPException(status_code=400, detail="Preset id already exists")
+
+        preset = ProductPreset(id=clean_id, label=label, is_active=True)
+        update_preset_from_form(
+            preset=preset,
+            label=label,
+            category=category,
+            description=description,
+            width_mm=width_mm,
+            depth_mm=depth_mm,
+            height_mm=height_mm,
+            shape=shape,
+            color=color,
+            surface=surface,
+            material=material,
+            mount_type=mount_type,
+            support_allowed=support_allowed,
+            printer_targets=printer_targets,
+            use_gpu=use_gpu,
+            gpu_task=gpu_task,
+            cable_channels=cable_channels,
+            cable_diameter_mm=cable_diameter_mm,
+            magnet_diameter_mm=magnet_diameter_mm,
+            magnet_thickness_mm=magnet_thickness_mm,
+            hinge_count=hinge_count,
+            clearance_mm=clearance_mm,
+        )
+        db.add(preset)
+        db.commit()
+        return RedirectResponse(url="/presets", status_code=303)
+    finally:
+        db.close()
+
+
+@app.get("/presets/{preset_id}/edit", response_class=HTMLResponse)
+def edit_preset_form(request: Request, preset_id: str):
+    db = get_db()
+    try:
+        preset = db.query(ProductPreset).filter(ProductPreset.id == preset_id).first()
+        if not preset:
+            raise HTTPException(status_code=404, detail="Preset not found")
+        return templates.TemplateResponse(
+            name="preset_form.html",
+            request=request,
+            context={
+                "mode": "edit",
+                "preset": preset,
+                "action": f"/presets/{preset.id}/edit",
+                "error": "",
+            },
+        )
+    finally:
+        db.close()
+
+
+@app.post("/presets/{preset_id}/edit")
+def edit_preset(
+    preset_id: str,
+    label: str = Form(...),
+    category: str = Form(""),
+    description: str = Form(""),
+    width_mm: float | None = Form(None),
+    depth_mm: float | None = Form(None),
+    height_mm: float | None = Form(None),
+    shape: str = Form(""),
+    color: str = Form(""),
+    surface: str = Form(""),
+    material: str = Form("PETG"),
+    mount_type: str = Form(""),
+    support_allowed: str | None = Form(None),
+    printer_targets: list[str] = Form([]),
+    use_gpu: str | None = Form(None),
+    gpu_task: str = Form("none"),
+    cable_channels: int = Form(1),
+    cable_diameter_mm: float = Form(6.0),
+    magnet_diameter_mm: float = Form(10.0),
+    magnet_thickness_mm: float = Form(2.0),
+    hinge_count: int = Form(3),
+    clearance_mm: float = Form(0.3),
+):
+    db = get_db()
+    try:
+        preset = db.query(ProductPreset).filter(ProductPreset.id == preset_id).first()
+        if not preset:
+            raise HTTPException(status_code=404, detail="Preset not found")
+
+        update_preset_from_form(
+            preset=preset,
+            label=label,
+            category=category,
+            description=description,
+            width_mm=width_mm,
+            depth_mm=depth_mm,
+            height_mm=height_mm,
+            shape=shape,
+            color=color,
+            surface=surface,
+            material=material,
+            mount_type=mount_type,
+            support_allowed=support_allowed,
+            printer_targets=printer_targets,
+            use_gpu=use_gpu,
+            gpu_task=gpu_task,
+            cable_channels=cable_channels,
+            cable_diameter_mm=cable_diameter_mm,
+            magnet_diameter_mm=magnet_diameter_mm,
+            magnet_thickness_mm=magnet_thickness_mm,
+            hinge_count=hinge_count,
+            clearance_mm=clearance_mm,
+        )
+        preset.is_active = True
+        db.commit()
+        return RedirectResponse(url="/presets", status_code=303)
+    finally:
+        db.close()
+
+
+@app.post("/presets/{preset_id}/delete")
+def delete_preset(preset_id: str):
+    db = get_db()
+    try:
+        preset = db.query(ProductPreset).filter(ProductPreset.id == preset_id).first()
+        if not preset:
+            raise HTTPException(status_code=404, detail="Preset not found")
+        preset.is_active = False
+        preset.updated_at = datetime.utcnow()
+        db.commit()
+        return RedirectResponse(url="/presets", status_code=303)
+    finally:
+        db.close()
+
+
 @app.get("/products/new", response_class=HTMLResponse)
 def new_product(request: Request):
-    return templates.TemplateResponse(name="new_product.html", request=request, context={})
+    db = get_db()
+    try:
+        return templates.TemplateResponse(
+            name="new_product.html",
+            request=request,
+            context={
+                "presets": active_preset_dicts(db, include_custom=True),
+            },
+        )
+    finally:
+        db.close()
 
 
 @app.post("/products")
@@ -930,6 +1333,7 @@ def edit_product_form(request: Request, product_id: str):
             request=request,
             context={
                 "product": product,
+                "presets": active_preset_dicts(db, include_custom=True),
             },
         )
     finally:
