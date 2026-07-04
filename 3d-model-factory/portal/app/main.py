@@ -19,6 +19,7 @@ from file_reader import (
     read_product_debug_files,
     read_run_debug_files,
 )
+from job_runner import create_blender_job
 from product_md import write_product_md
 from run_service import (
     build_run_summaries,
@@ -610,87 +611,6 @@ def update_preset_from_form(
     preset.updated_at = datetime.utcnow()
 
 
-def create_blender_job(product_id: str, product_obj=None, run_number: int = 1) -> str:
-    current_product_for_job = product_obj
-    batch = client.BatchV1Api()
-
-    safe_id = product_id.replace("-", "")[:16]
-    suffix = datetime.utcnow().strftime("%H%M%S")
-    job_name = f"model-factory-{safe_id}-{suffix}"
-
-    container = client.V1Container(
-        name="blender-worker",
-        image=WORKER_IMAGE,
-        image_pull_policy="Always",
-        resources=client.V1ResourceRequirements(
-            requests={"cpu": "1", "memory": "2Gi"},
-            limits=({"cpu": "4", "memory": "8Gi", "nvidia.com/gpu": "1"} if getattr(current_product_for_job, "use_gpu", False) else {"cpu": "4", "memory": "8Gi"}),
-        ),
-        env=[
-            client.V1EnvVar(name="PRODUCT_ID", value=product_id),
-            client.V1EnvVar(name="PRODUCT_MD", value=f"/data/products/{product_id}/input/product.md"),
-            client.V1EnvVar(name="OUTPUT_DIR", value=run_container_dir_for(product_id, run_number)),
-            client.V1EnvVar(name="RUN_NUMBER", value=str(run_number)),
-            client.V1EnvVar(name="WORKER_IMAGE", value=WORKER_IMAGE),
-            client.V1EnvVar(name="USE_GPU", value="true" if getattr(current_product_for_job, "use_gpu", False) else "false"),
-            client.V1EnvVar(name="GPU_TASK", value=getattr(current_product_for_job, "gpu_task", "none") or "none"),
-        ],
-        volume_mounts=[
-            client.V1VolumeMount(name="model-storage", mount_path="/data")
-        ],
-    )
-
-    volume = client.V1Volume(
-        name="model-storage",
-        persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(claim_name=PVC_NAME),
-    )
-
-    tolerations = []
-    if getattr(current_product_for_job, "use_gpu", False):
-        tolerations = [
-            client.V1Toleration(
-                key="nvidia.com/gpu",
-                operator="Equal",
-                value="rtx4060",
-                effect="NoSchedule",
-            ),
-            client.V1Toleration(
-                key="nvidia.com/gpu",
-                operator="Equal",
-                value="rtx2070",
-                effect="NoSchedule",
-            ),
-        ]
-
-    pod_spec = client.V1PodSpec(
-        restart_policy="Never",
-        containers=[container],
-        volumes=[volume],
-        tolerations=tolerations,
-    )
-
-    template = client.V1PodTemplateSpec(
-        metadata=client.V1ObjectMeta(labels={"app": "model-factory-worker", "product-id": product_id}),
-        spec=pod_spec,
-    )
-
-    job_spec = client.V1JobSpec(
-        template=template,
-        backoff_limit=1,
-        ttl_seconds_after_finished=86400,
-    )
-
-    job = client.V1Job(
-        api_version="batch/v1",
-        kind="Job",
-        metadata=client.V1ObjectMeta(name=job_name, namespace=NAMESPACE),
-        spec=job_spec,
-    )
-
-    batch.create_namespaced_job(namespace=NAMESPACE, body=job)
-    return job_name
-
-
 def refresh_product_status(db, product: ProductRequest):
     if not product.jobs:
         return
@@ -1089,7 +1009,18 @@ def create_product(
         ))
 
         try:
-            job_name = create_blender_job(product.id, product, run_number)
+            job_name = create_blender_job(
+                product_id=product.id,
+                product_md_path=f"{product_container_base_dir(product.id)}/input/product.md",
+                output_dir=run_container_dir_for(product.id, run_number),
+                image=WORKER_IMAGE,
+                namespace=NAMESPACE,
+                use_gpu=bool(product.use_gpu),
+                gpu_task=product.gpu_task or "none",
+                run_number=run_number,
+                trigger="create",
+                pvc_name=PVC_NAME,
+            )
 
             db.add(GenerationJob(
                 id=str(uuid.uuid4()),
@@ -1216,7 +1147,18 @@ def edit_product(
         )
 
         try:
-            job_name = create_blender_job(product.id, product, run_number)
+            job_name = create_blender_job(
+                product_id=product.id,
+                product_md_path=f"{product_container_base_dir(product.id)}/input/product.md",
+                output_dir=run_container_dir_for(product.id, run_number),
+                image=WORKER_IMAGE,
+                namespace=NAMESPACE,
+                use_gpu=bool(product.use_gpu),
+                gpu_task=product.gpu_task or "none",
+                run_number=run_number,
+                trigger="edit",
+                pvc_name=PVC_NAME,
+            )
 
             db.add(GenerationJob(
                 id=str(uuid.uuid4()),
@@ -1386,7 +1328,18 @@ def rerun_product(product_id: str):
         )
 
         try:
-            job_name = create_blender_job(product.id, product, run_number)
+            job_name = create_blender_job(
+                product_id=product.id,
+                product_md_path=f"{product_container_base_dir(product.id)}/input/product.md",
+                output_dir=run_container_dir_for(product.id, run_number),
+                image=WORKER_IMAGE,
+                namespace=NAMESPACE,
+                use_gpu=bool(product.use_gpu),
+                gpu_task=product.gpu_task or "none",
+                run_number=run_number,
+                trigger="rerun",
+                pvc_name=PVC_NAME,
+            )
 
             db.add(GenerationJob(
                 id=str(uuid.uuid4()),
