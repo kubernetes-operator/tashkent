@@ -20,6 +20,14 @@ from file_reader import (
     read_run_debug_files,
 )
 from product_md import write_product_md
+from run_service import (
+    build_run_summaries,
+    get_next_run_number,
+    get_product_base_dir,
+    get_run_dir,
+    list_run_numbers,
+    write_run_metadata as write_run_metadata_file,
+)
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -35,6 +43,7 @@ NAMESPACE = os.environ.get("NAMESPACE", "model-factory")
 WORKER_IMAGE = os.environ.get("WORKER_IMAGE", "registry.local.cloud:5000/model-factory/blender-worker:latest")
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "/data"))
 PVC_NAME = os.environ.get("PVC_NAME", "model-factory-pvc")
+PRODUCTS_DATA_ROOT = OUTPUT_DIR / "products"
 
 Base = declarative_base()
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
@@ -418,7 +427,7 @@ def seed_default_presets_if_empty():
 
 
 def product_base_dir(product_id: str) -> Path:
-    return OUTPUT_DIR / "products" / product_id
+    return get_product_base_dir(product_id, PRODUCTS_DATA_ROOT)
 
 
 def product_container_base_dir(product_id: str) -> str:
@@ -426,87 +435,11 @@ def product_container_base_dir(product_id: str) -> str:
 
 
 def run_dir_for(product_id: str, run_number: int) -> Path:
-    return product_base_dir(product_id) / "runs" / str(run_number)
+    return get_run_dir(product_id, run_number, PRODUCTS_DATA_ROOT)
 
 
 def run_container_dir_for(product_id: str, run_number: int) -> str:
     return f"{product_container_base_dir(product_id)}/runs/{run_number}"
-
-
-def next_run_number(product_id: str) -> int:
-    runs_dir = product_base_dir(product_id) / "runs"
-    existing = []
-    if runs_dir.exists():
-        for child in runs_dir.iterdir():
-            if child.is_dir() and child.name.isdigit():
-                existing.append(int(child.name))
-    return (max(existing) + 1) if existing else 1
-
-
-def write_run_metadata(product: ProductRequest, run_number: int, output_dir: Path, trigger: str = "create") -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    product_id = product.id
-    lines = [
-        f"product_id={product_id}",
-        f"trigger={trigger}",
-        f"run_number={run_number}",
-        f"created_at={datetime.utcnow().isoformat()}Z",
-        f"product_md_path={product_container_base_dir(product_id)}/input/product.md",
-        f"output_dir={run_container_dir_for(product_id, run_number)}",
-        f"image={WORKER_IMAGE}",
-        f"use_gpu={'true' if product.use_gpu else 'false'}",
-        f"gpu_task={product.gpu_task or 'none'}",
-    ]
-    path = output_dir / "run_metadata.txt"
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return path
-
-
-def collect_runs(product_id: str):
-    runs_dir = product_base_dir(product_id) / "runs"
-    run_numbers = []
-    if runs_dir.exists():
-        for child in runs_dir.iterdir():
-            if child.is_dir() and child.name.isdigit():
-                run_numbers.append(int(child.name))
-
-    latest_run_number = max(run_numbers) if run_numbers else None
-    run_files = ["preview.png", "validation.txt", "model.stl", "model.3mf"]
-    runs = []
-    for run_number in sorted(run_numbers):
-        run_dir = runs_dir / str(run_number)
-        files = []
-        for name in run_files:
-            path = run_dir / name
-            exists = path.exists() and path.is_file()
-            try:
-                size = path.stat().st_size if exists else None
-            except OSError:
-                exists = False
-                size = None
-            files.append({
-                "name": name,
-                "exists": exists,
-                "size": size,
-                "download_url": f"/products/{product_id}/download/runs/{run_number}/{name}",
-            })
-
-        runs.append({
-            "number": run_number,
-            "is_latest": run_number == latest_run_number,
-            "files": files,
-        })
-    return runs
-
-
-def available_run_numbers(product_id: str) -> list[int]:
-    runs_dir = product_base_dir(product_id) / "runs"
-    run_numbers = []
-    if runs_dir.exists():
-        for child in runs_dir.iterdir():
-            if child.is_dir() and child.name.isdigit():
-                run_numbers.append(int(child.name))
-    return sorted(run_numbers)
 
 
 def parse_run_selection(runs_param: str | None, available: list[int]) -> tuple[list[int], list[str]]:
@@ -1134,9 +1067,18 @@ def create_product(
         db.commit()
 
         md_path = write_product_md(product, product_base_dir(product.id))
-        run_number = 1
+        run_number = get_next_run_number(product.id, PRODUCTS_DATA_ROOT)
         output_dir = run_dir_for(product.id, run_number)
-        write_run_metadata(product, run_number, output_dir, trigger="create")
+        write_run_metadata_file(
+            product_id=product.id,
+            run_number=run_number,
+            output_dir=output_dir,
+            product_md_path=Path(product_container_base_dir(product.id)) / "input" / "product.md",
+            image=WORKER_IMAGE,
+            use_gpu=bool(product.use_gpu),
+            gpu_task=product.gpu_task or "none",
+            trigger="create",
+        )
 
         db.add(ProductFile(
             id=str(uuid.uuid4()),
@@ -1260,9 +1202,18 @@ def edit_product(
         product.status = "MD_CREATED"
 
         write_product_md(product, product_base_dir(product.id))
-        run_number = next_run_number(product.id)
+        run_number = get_next_run_number(product.id, PRODUCTS_DATA_ROOT)
         output_dir = run_dir_for(product.id, run_number)
-        write_run_metadata(product, run_number, output_dir, trigger="edit")
+        write_run_metadata_file(
+            product_id=product.id,
+            run_number=run_number,
+            output_dir=output_dir,
+            product_md_path=Path(product_container_base_dir(product.id)) / "input" / "product.md",
+            image=WORKER_IMAGE,
+            use_gpu=bool(product.use_gpu),
+            gpu_task=product.gpu_task or "none",
+            trigger="edit",
+        )
 
         try:
             job_name = create_blender_job(product.id, product, run_number)
@@ -1306,7 +1257,7 @@ def compare_product_runs(request: Request, product_id: str):
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
 
-        available = available_run_numbers(product_id)
+        available = list_run_numbers(product_id, PRODUCTS_DATA_ROOT)
         selected, warnings = parse_run_selection(request.query_params.get("runs"), available)
         compare_runs = collect_compare_runs(product_id, selected)
 
@@ -1359,7 +1310,7 @@ def product_detail(request: Request, product_id: str):
         ).order_by(GenerationJob.created_at.desc()).all()
 
         debug_texts, validation_status = collect_debug_texts(product_id)
-        runs = collect_runs(product_id)
+        runs = build_run_summaries(product_id, data_root=PRODUCTS_DATA_ROOT)
 
         return templates.TemplateResponse(
             name="product_detail.html",
@@ -1384,7 +1335,10 @@ def download_file(product_id: str, subdir: str, filename: str):
     if filename != Path(filename).name:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    path = product_base_dir(product_id) / subdir / filename
+    try:
+        path = product_base_dir(product_id) / subdir / filename
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid product_id")
 
     if not path.exists():
         raise HTTPException(status_code=404, detail="File not found")
@@ -1399,7 +1353,10 @@ def download_run_file(product_id: str, run_number: int, filename: str):
     if filename != Path(filename).name:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
-    path = run_dir_for(product_id, run_number) / filename
+    try:
+        path = run_dir_for(product_id, run_number) / filename
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid path")
 
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
@@ -1415,9 +1372,18 @@ def rerun_product(product_id: str):
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
 
-        run_number = next_run_number(product.id)
+        run_number = get_next_run_number(product.id, PRODUCTS_DATA_ROOT)
         output_dir = run_dir_for(product.id, run_number)
-        write_run_metadata(product, run_number, output_dir, trigger="rerun")
+        write_run_metadata_file(
+            product_id=product.id,
+            run_number=run_number,
+            output_dir=output_dir,
+            product_md_path=Path(product_container_base_dir(product.id)) / "input" / "product.md",
+            image=WORKER_IMAGE,
+            use_gpu=bool(product.use_gpu),
+            gpu_task=product.gpu_task or "none",
+            trigger="rerun",
+        )
 
         try:
             job_name = create_blender_job(product.id, product, run_number)
