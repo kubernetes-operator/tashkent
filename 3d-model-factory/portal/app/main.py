@@ -13,6 +13,14 @@ from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
 from kubernetes import client, config
 
+from file_reader import (
+    parse_key_value_text,
+    parse_validation_status,
+    read_product_debug_files,
+    read_run_debug_files,
+)
+from product_md import write_product_md
+
 
 APP_DIR = Path(__file__).resolve().parent
 TEMPLATE_DIR = APP_DIR / "templates"
@@ -27,7 +35,6 @@ NAMESPACE = os.environ.get("NAMESPACE", "model-factory")
 WORKER_IMAGE = os.environ.get("WORKER_IMAGE", "registry.local.cloud:5000/model-factory/blender-worker:latest")
 OUTPUT_DIR = Path(os.environ.get("OUTPUT_DIR", "/data"))
 PVC_NAME = os.environ.get("PVC_NAME", "model-factory-pvc")
-DEBUG_TEXT_LIMIT = 20000
 
 Base = declarative_base()
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
@@ -528,47 +535,7 @@ def parse_run_selection(runs_param: str | None, available: list[int]) -> tuple[l
     return selected, warnings
 
 
-def read_limited_text(path: Path, limit: int = DEBUG_TEXT_LIMIT) -> tuple[str | None, bool]:
-    if not path.exists() or not path.is_file():
-        return None, False
-
-    text_value = path.read_text(encoding="utf-8", errors="replace")
-    if len(text_value) > limit:
-        return text_value[:limit] + "\n... truncated ...", True
-    return text_value, False
-
-
-def parse_key_value_text(content: str | None) -> dict[str, str]:
-    parsed = {}
-    if not content:
-        return parsed
-
-    for line in content.splitlines():
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-
-        separator = "=" if "=" in stripped else (":" if ":" in stripped else None)
-        if not separator:
-            continue
-
-        key, value = stripped.split(separator, 1)
-        key = key.strip().lstrip("-").strip()
-        if key:
-            parsed[key] = value.strip()
-    return parsed
-
-
-def validation_status_from_text(content: str | None) -> str:
-    values = parse_key_value_text(content)
-    status = values.get("VALIDATION_STATUS", "UNKNOWN").strip().upper()
-    if status in {"PASS", "WARN", "FAIL"}:
-        return status
-    return "UNKNOWN"
-
-
 def collect_compare_runs(product_id: str, run_numbers: list[int]):
-    text_files = ["run_metadata.txt", "validation.txt", "design_metadata.txt", "output_status.txt"]
     design_keys = [
         "engine_version",
         "design_profile",
@@ -588,19 +555,7 @@ def collect_compare_runs(product_id: str, run_numbers: list[int]):
 
     for run_number in run_numbers:
         run_dir = run_dir_for(product_id, run_number)
-        texts = {}
-        for filename in text_files:
-            try:
-                content, truncated = read_limited_text(run_dir / filename, DEBUG_TEXT_LIMIT)
-            except Exception as e:
-                content = f"파일 읽기 실패: {repr(e)}"
-                truncated = False
-            texts[filename] = {
-                "content": content,
-                "truncated": truncated,
-                "exists": content is not None,
-            }
-
+        texts = read_run_debug_files(run_dir)
         design_values = parse_key_value_text(texts["design_metadata.txt"]["content"])
         output_values = parse_key_value_text(texts["output_status.txt"]["content"])
         preview_path = run_dir / "preview.png"
@@ -610,7 +565,7 @@ def collect_compare_runs(product_id: str, run_numbers: list[int]):
             "number": run_number,
             "preview_exists": preview_exists,
             "preview_url": f"/products/{product_id}/download/runs/{run_number}/preview.png",
-            "validation_status": validation_status_from_text(texts["validation.txt"]["content"]),
+            "validation_status": parse_validation_status(texts["validation.txt"]["content"]),
             "design": {key: design_values.get(key, "") for key in design_keys},
             "output": {key: output_values.get(key, "") for key in output_keys},
             "texts": texts,
@@ -620,103 +575,8 @@ def collect_compare_runs(product_id: str, run_numbers: list[int]):
 
 
 def collect_debug_texts(product_id: str):
-    base = product_base_dir(product_id)
-    targets = [
-        ("validation.txt", base / "output" / "validation.txt"),
-        ("product.md", base / "input" / "product.md"),
-        ("output_status.txt", base / "output" / "output_status.txt"),
-        ("design_metadata.txt", base / "output" / "design_metadata.txt"),
-        ("worker_flow_debug.txt", base / "output" / "worker_flow_debug.txt"),
-        ("worker_error.txt", base / "output" / "worker_error.txt"),
-        ("shape_intent_debug.txt", base / "output" / "shape_intent_debug.txt"),
-        ("job.log", base / "logs" / "job.log"),
-    ]
-
-    debug_texts = []
-    validation_status = "UNKNOWN"
-    for label, path in targets:
-        try:
-            content, truncated = read_limited_text(path)
-        except Exception as e:
-            content = f"파일 읽기 실패: {repr(e)}"
-            truncated = False
-
-        if label == "validation.txt" and content:
-            for line in content.splitlines():
-                if line.startswith("VALIDATION_STATUS="):
-                    validation_status = line.split("=", 1)[1].strip() or "UNKNOWN"
-                    break
-
-        debug_texts.append({
-            "label": label,
-            "content": content,
-            "truncated": truncated,
-            "exists": content is not None,
-        })
-
-    return debug_texts, validation_status
-
-
-def write_product_md(product: ProductRequest) -> Path:
-    base = product_base_dir(product.id)
-    input_dir = base / "input"
-    output_dir = base / "output"
-    logs_dir = base / "logs"
-
-    input_dir.mkdir(parents=True, exist_ok=True)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    logs_dir.mkdir(parents=True, exist_ok=True)
-
-    content = [
-        "# Product Design Request",
-        "",
-        "## Basic",
-        "",
-        f"- Product ID: {product.id}",
-        f"- Name: {product.name}",
-        f"- Category: {product.category}",
-        f"- Preset ID: {product.preset_id or 'custom'}",
-        f"- Description: {product.description or ''}",
-        "",
-        "## Dimensions",
-        "",
-        f"- Width: {product.width_mm or ''}mm",
-        f"- Depth: {product.depth_mm or ''}mm",
-        f"- Height: {product.height_mm or ''}mm",
-        "",
-        "## Design",
-        "",
-        f"- Shape: {product.shape or ''}",
-        f"- Surface: {product.surface or ''}",
-        f"- Color: {product.color or ''}",
-        f"- Material: {product.material or ''}",
-        f"- Mount Type: {product.mount_type or ''}",
-        f"- Support Allowed: {product.support_allowed}",
-        f"- Cable Channels: {product.cable_channels or 1}",
-        f"- Cable Diameter: {product.cable_diameter_mm or 6.0}mm",
-        f"- Magnet Diameter: {product.magnet_diameter_mm or 10.0}mm",
-        f"- Magnet Thickness: {product.magnet_thickness_mm or 2.0}mm",
-        f"- Hinge Count: {product.hinge_count or 3}",
-        f"- Clearance: {product.clearance_mm or 0.3}mm",
-        f"- GPU Enabled: {product.use_gpu}",
-        f"- GPU Task: {product.gpu_task or 'none'}",
-        "",
-        "## Printer Target",
-        "",
-        product.printer_targets or "",
-        "",
-        "## Output Requirements",
-        "",
-        "- Generate STL",
-        "- Generate BLEND",
-        "- Generate README",
-        "- Validate mesh",
-        ""
-    ]
-
-    path = input_dir / "product.md"
-    path.write_text("\n".join(content), encoding="utf-8")
-    return path
+    debug_files = read_product_debug_files(product_base_dir(product_id))
+    return debug_files["debug_texts"], debug_files["validation_status"]
 
 
 def update_product_from_form(
@@ -1273,7 +1133,7 @@ def create_product(
         db.add(product)
         db.commit()
 
-        md_path = write_product_md(product)
+        md_path = write_product_md(product, product_base_dir(product.id))
         run_number = 1
         output_dir = run_dir_for(product.id, run_number)
         write_run_metadata(product, run_number, output_dir, trigger="create")
@@ -1399,7 +1259,7 @@ def edit_product(
         )
         product.status = "MD_CREATED"
 
-        write_product_md(product)
+        write_product_md(product, product_base_dir(product.id))
         run_number = next_run_number(product.id)
         output_dir = run_dir_for(product.id, run_number)
         write_run_metadata(product, run_number, output_dir, trigger="edit")
