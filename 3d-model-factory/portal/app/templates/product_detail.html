@@ -20,6 +20,12 @@
     <tr><th>프린터</th><td><pre>{{ product.printer_targets }}</pre></td></tr>
   </table>
 
+  <p>
+    <a href="/products/{{ product.id }}/edit">입력값 수정 후 재생성</a>
+    |
+    <a href="/products/{{ product.id }}/compare">Run 비교</a>
+  </p>
+
   <form method="post" action="/products/{{ product.id }}/rerun">
     <button type="submit">다시 생성</button>
   </form>

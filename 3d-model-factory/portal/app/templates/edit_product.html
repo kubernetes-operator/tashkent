@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h2>제품 입력값 수정 후 재생성</h2>
+
+  <form method="post" action="/products/{{ product.id }}/edit">
+    <label>제품 프리셋</label>
+    <select id="preset_selector" name="preset_id">
+      <option value="custom" {% if product.preset_id == 'custom' %}selected{% endif %}>직접 입력</option>
+      <option value="bambu_a1_nozzle_holder" {% if product.preset_id == 'bambu_a1_nozzle_holder' %}selected{% endif %}>Bambu A1 노즐 홀더</option>
+      <option value="bambu_scraper_holder" {% if product.preset_id == 'bambu_scraper_holder' %}selected{% endif %}>Bambu 스크래퍼 거치대</option>
+      <option value="m3_wall_hook" {% if product.preset_id == 'm3_wall_hook' %}selected{% endif %}>M3 벽걸이 후크</option>
+      <option value="cable_clip_small" {% if product.preset_id == 'cable_clip_small' %}selected{% endif %}>소형 케이블 클립</option>
+      <option value="homelab_label_holder" {% if product.preset_id == 'homelab_label_holder' %}selected{% endif %}>홈랩/랙 라벨 홀더</option>
+      <option value="battery_case_2cell" {% if product.preset_id == 'battery_case_2cell' %}selected{% endif %}>2셀 배터리 케이스</option>
+    </select>
+
+    <p class="hint">값을 저장하면 product.md를 다시 만들고 새 run을 생성합니다.</p>
+
+    <label>제품명</label>
+    <input name="name" required value="{{ product.name or '' }}">
+
+    <label>카테고리</label>
+    <select name="category">
+      <option value="bambu_accessory" {% if product.category == 'bambu_accessory' %}selected{% endif %}>Bambu 액세서리</option>
+      <option value="homelab_accessory" {% if product.category == 'homelab_accessory' %}selected{% endif %}>홈랩 액세서리</option>
+      <option value="cable_management" {% if product.category == 'cable_management' %}selected{% endif %}>케이블 정리</option>
+      <option value="battery_case" {% if product.category == 'battery_case' %}selected{% endif %}>배터리 케이스</option>
+      <option value="desk_organizer" {% if product.category == 'desk_organizer' %}selected{% endif %}>책상 정리</option>
+    </select>
+
+    <label>설명</label>
+    <textarea name="description" rows="4">{{ product.description or '' }}</textarea>
+
+    <div class="grid3">
+      <div>
+        <label>가로 mm</label>
+        <input name="width_mm" type="number" step="0.1" value="{{ product.width_mm or '' }}">
+      </div>
+      <div>
+        <label>세로/깊이 mm</label>
+        <input name="depth_mm" type="number" step="0.1" value="{{ product.depth_mm or '' }}">
+      </div>
+      <div>
+        <label>높이 mm</label>
+        <input name="height_mm" type="number" step="0.1" value="{{ product.height_mm or '' }}">
+      </div>
+    </div>
+
+    <label>형태</label>
+    <input name="shape" value="{{ product.shape or '' }}">
+
+    <label>색상</label>
+    <input name="color" value="{{ product.color or '' }}">
+
+    <label>표면</label>
+    <input name="surface" value="{{ product.surface or '' }}">
+
+    <label>재료</label>
+    <select name="material">
+      <option value="PLA" {% if product.material == 'PLA' %}selected{% endif %}>PLA</option>
+      <option value="PETG" {% if product.material == 'PETG' %}selected{% endif %}>PETG</option>
+      <option value="ASA" {% if product.material == 'ASA' %}selected{% endif %}>ASA</option>
+      <option value="ABS" {% if product.material == 'ABS' %}selected{% endif %}>ABS</option>
+      <option value="TPU" {% if product.material == 'TPU' %}selected{% endif %}>TPU</option>
+    </select>
+
+    <label>고정 방식</label>
+    <input name="mount_type" value="{{ product.mount_type or '' }}">
+
+    <label>
+      <input type="checkbox" name="support_allowed" value="true" {% if product.support_allowed %}checked{% endif %}>
+      서포트 허용
+    </label>
+
+    <label>
+      <input type="checkbox" name="use_gpu" value="true" {% if product.use_gpu %}checked{% endif %}>
+      GPU Preview 렌더링 사용
+    </label>
+
+    <label>GPU 작업</label>
+    <select name="gpu_task">
+      <option value="none" {% if (product.gpu_task or 'none') == 'none' %}selected{% endif %}>사용 안 함</option>
+      <option value="preview" {% if product.gpu_task == 'preview' %}selected{% endif %}>Preview 렌더링</option>
+      <option value="ai_design" {% if product.gpu_task == 'ai_design' %}selected{% endif %}>AI 디자인 보조</option>
+      <option value="preview,ai_design" {% if product.gpu_task == 'preview,ai_design' %}selected{% endif %}>Preview + AI 디자인 보조</option>
+    </select>
+
+    <h3>세부 파라미터</h3>
+
+    <div class="grid3">
+      <div>
+        <label>케이블 구 수</label>
+        <input name="cable_channels" type="number" min="1" max="6" value="{{ product.cable_channels or 1 }}">
+      </div>
+      <div>
+        <label>케이블 직경 mm</label>
+        <input name="cable_diameter_mm" type="number" step="0.1" value="{{ product.cable_diameter_mm or 6.0 }}">
+      </div>
+      <div>
+        <label>여유 공차 mm</label>
+        <input name="clearance_mm" type="number" step="0.1" value="{{ product.clearance_mm or 0.3 }}">
+      </div>
+    </div>
+
+    <div class="grid3">
+      <div>
+        <label>자석 직경 mm</label>
+        <input name="magnet_diameter_mm" type="number" step="0.1" value="{{ product.magnet_diameter_mm or 10.0 }}">
+      </div>
+      <div>
+        <label>자석 두께 mm</label>
+        <input name="magnet_thickness_mm" type="number" step="0.1" value="{{ product.magnet_thickness_mm or 2.0 }}">
+      </div>
+      <div>
+        <label>힌지 개수</label>
+        <input name="hinge_count" type="number" min="1" max="8" value="{{ product.hinge_count or 3 }}">
+      </div>
+    </div>
+
+    {% set targets = product.printer_targets or '' %}
+    <label>대상 프린터</label>
+    <div class="checks">
+      <label><input type="checkbox" name="printer_targets" value="Bambu Lab A1" {% if 'Bambu Lab A1' in targets %}checked{% endif %}> Bambu Lab A1</label>
+      <label><input type="checkbox" name="printer_targets" value="Bambu Lab P1S" {% if 'Bambu Lab P1S' in targets %}checked{% endif %}> Bambu Lab P1S</label>
+      <label><input type="checkbox" name="printer_targets" value="Bambu Lab P2S" {% if 'Bambu Lab P2S' in targets %}checked{% endif %}> Bambu Lab P2S</label>
+    </div>
+
+    <button type="submit">수정 후 재생성</button>
+    <p><a href="/products/{{ product.id }}">상세로 돌아가기</a></p>
+  </form>
+</section>
+
+<script>
+const PRESETS = {
+  "custom": { label: "직접 입력", category: "", description: "", width_mm: "", depth_mm: "", height_mm: "", shape: "", color: "", surface: "", material: "PETG", mount_type: "", support_allowed: false, use_gpu: false, gpu_task: "none" },
+  "bambu_a1_nozzle_holder": { label: "Bambu A1 노즐 홀더", category: "bambu_accessory", description: "Bambu Lab A1 주변에 둘 수 있는 소형 노즐/소모품 홀더", width_mm: 95, depth_mm: 45, height_mm: 28, shape: "box tray", color: "black", surface: "grid matte", material: "PETG", mount_type: "desktop", support_allowed: false, use_gpu: true, gpu_task: "preview" },
+  "bambu_scraper_holder": { label: "Bambu 스크래퍼 거치대", category: "bambu_accessory", description: "스크래퍼 또는 얇은 공구를 세워 보관하는 거치대", width_mm: 110, depth_mm: 38, height_mm: 42, shape: "hook holder", color: "black", surface: "matte", material: "PETG", mount_type: "M3 bolt", support_allowed: false, use_gpu: true, gpu_task: "preview" },
+  "m3_wall_hook": { label: "M3 벽걸이 후크", category: "desk_organizer", description: "M3 볼트 2개로 고정하는 범용 벽걸이 후크", width_mm: 80, depth_mm: 42, height_mm: 35, shape: "hook holder", color: "black", surface: "matte", material: "PETG", mount_type: "M3 bolt", support_allowed: false, use_gpu: true, gpu_task: "preview" },
+  "cable_clip_small": { label: "소형 케이블 클립", category: "cable_management", description: "USB-C, 전원선 등 얇은 케이블을 정리하는 클립", width_mm: 55, depth_mm: 24, height_mm: 18, shape: "clip", color: "black", surface: "matte", material: "PETG", mount_type: "adhesive", support_allowed: false, use_gpu: false, gpu_task: "none" },
+  "homelab_label_holder": { label: "홈랩/랙 라벨 홀더", category: "homelab_accessory", description: "서버, 스위치, 케이블 앞단에 붙이는 라벨 홀더", width_mm: 120, depth_mm: 22, height_mm: 16, shape: "rounded rectangular holder", color: "white", surface: "matte", material: "PLA", mount_type: "adhesive", support_allowed: false, use_gpu: false, gpu_task: "none" },
+  "battery_case_2cell": { label: "2셀 배터리 케이스", category: "battery_case", description: "소형 배터리 2개를 보관하는 단순 오픈 트레이 케이스", width_mm: 72, depth_mm: 38, height_mm: 18, shape: "box case", color: "black", surface: "grid matte", material: "PETG", mount_type: "none", support_allowed: false, use_gpu: true, gpu_task: "preview" }
+};
+
+function setField(name, value) {
+  const el = document.querySelector(`[name="${name}"]`);
+  if (!el) return;
+  if (el.type === "checkbox") {
+    el.checked = Boolean(value);
+  } else {
+    el.value = value ?? "";
+  }
+}
+
+function applyPreset(id) {
+  const p = PRESETS[id] || PRESETS["custom"];
+  if (id !== "custom") setField("name", p.label);
+  setField("category", p.category || "bambu_accessory");
+  setField("description", p.description);
+  setField("width_mm", p.width_mm);
+  setField("depth_mm", p.depth_mm);
+  setField("height_mm", p.height_mm);
+  setField("shape", p.shape);
+  setField("color", p.color);
+  setField("surface", p.surface);
+  setField("material", p.material || "PETG");
+  setField("mount_type", p.mount_type);
+  setField("support_allowed", p.support_allowed);
+  setField("use_gpu", p.use_gpu);
+  setField("gpu_task", p.gpu_task || "none");
+}
+
+document.getElementById("preset_selector").addEventListener("change", function(e) {
+  applyPreset(e.target.value);
+});
+</script>
+{% endblock %}

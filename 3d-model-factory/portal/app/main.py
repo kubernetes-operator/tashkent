@@ -293,11 +293,12 @@ def next_run_number(product_id: str) -> int:
     return (max(existing) + 1) if existing else 1
 
 
-def write_run_metadata(product: ProductRequest, run_number: int, output_dir: Path) -> Path:
+def write_run_metadata(product: ProductRequest, run_number: int, output_dir: Path, trigger: str = "create") -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     product_id = product.id
     lines = [
         f"product_id={product_id}",
+        f"trigger={trigger}",
         f"run_number={run_number}",
         f"created_at={datetime.utcnow().isoformat()}Z",
         f"product_md_path={product_container_base_dir(product_id)}/input/product.md",
@@ -327,10 +328,16 @@ def collect_runs(product_id: str):
         files = []
         for name in run_files:
             path = run_dir / name
+            exists = path.exists() and path.is_file()
+            try:
+                size = path.stat().st_size if exists else None
+            except OSError:
+                exists = False
+                size = None
             files.append({
                 "name": name,
-                "exists": path.exists() and path.is_file(),
-                "size": path.stat().st_size if path.exists() and path.is_file() else None,
+                "exists": exists,
+                "size": size,
                 "download_url": f"/products/{product_id}/download/runs/{run_number}/{name}",
             })
 
@@ -342,6 +349,42 @@ def collect_runs(product_id: str):
     return runs
 
 
+def available_run_numbers(product_id: str) -> list[int]:
+    runs_dir = product_base_dir(product_id) / "runs"
+    run_numbers = []
+    if runs_dir.exists():
+        for child in runs_dir.iterdir():
+            if child.is_dir() and child.name.isdigit():
+                run_numbers.append(int(child.name))
+    return sorted(run_numbers)
+
+
+def parse_run_selection(runs_param: str | None, available: list[int]) -> tuple[list[int], list[str]]:
+    warnings = []
+    available_set = set(available)
+
+    if not runs_param:
+        return list(reversed(available))[:3], warnings
+
+    selected = []
+    for raw in runs_param.split(","):
+        value = raw.strip()
+        if not value:
+            continue
+        if not value.isdigit():
+            warnings.append(f"숫자가 아닌 run 값은 무시했습니다: {value}")
+            continue
+
+        run_number = int(value)
+        if run_number not in available_set:
+            warnings.append(f"존재하지 않는 run은 무시했습니다: {run_number}")
+            continue
+        if run_number not in selected:
+            selected.append(run_number)
+
+    return selected, warnings
+
+
 def read_limited_text(path: Path, limit: int = DEBUG_TEXT_LIMIT) -> tuple[str | None, bool]:
     if not path.exists() or not path.is_file():
         return None, False
@@ -350,6 +393,87 @@ def read_limited_text(path: Path, limit: int = DEBUG_TEXT_LIMIT) -> tuple[str | 
     if len(text_value) > limit:
         return text_value[:limit] + "\n... truncated ...", True
     return text_value, False
+
+
+def parse_key_value_text(content: str | None) -> dict[str, str]:
+    parsed = {}
+    if not content:
+        return parsed
+
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        separator = "=" if "=" in stripped else (":" if ":" in stripped else None)
+        if not separator:
+            continue
+
+        key, value = stripped.split(separator, 1)
+        key = key.strip().lstrip("-").strip()
+        if key:
+            parsed[key] = value.strip()
+    return parsed
+
+
+def validation_status_from_text(content: str | None) -> str:
+    values = parse_key_value_text(content)
+    status = values.get("VALIDATION_STATUS", "UNKNOWN").strip().upper()
+    if status in {"PASS", "WARN", "FAIL"}:
+        return status
+    return "UNKNOWN"
+
+
+def collect_compare_runs(product_id: str, run_numbers: list[int]):
+    text_files = ["run_metadata.txt", "validation.txt", "design_metadata.txt", "output_status.txt"]
+    design_keys = [
+        "engine_version",
+        "design_profile",
+        "material",
+        "width_mm",
+        "depth_mm",
+        "height_mm",
+        "cable_channels",
+        "cable_diameter_mm",
+        "magnet_diameter_mm",
+        "magnet_thickness_mm",
+        "hinge_count",
+        "clearance_mm",
+    ]
+    output_keys = ["preview_status", "render_mode", "three_mf_status", "design_profile"]
+    compare_runs = []
+
+    for run_number in run_numbers:
+        run_dir = run_dir_for(product_id, run_number)
+        texts = {}
+        for filename in text_files:
+            try:
+                content, truncated = read_limited_text(run_dir / filename, DEBUG_TEXT_LIMIT)
+            except Exception as e:
+                content = f"파일 읽기 실패: {repr(e)}"
+                truncated = False
+            texts[filename] = {
+                "content": content,
+                "truncated": truncated,
+                "exists": content is not None,
+            }
+
+        design_values = parse_key_value_text(texts["design_metadata.txt"]["content"])
+        output_values = parse_key_value_text(texts["output_status.txt"]["content"])
+        preview_path = run_dir / "preview.png"
+        preview_exists = preview_path.exists() and preview_path.is_file()
+
+        compare_runs.append({
+            "number": run_number,
+            "preview_exists": preview_exists,
+            "preview_url": f"/products/{product_id}/download/runs/{run_number}/preview.png",
+            "validation_status": validation_status_from_text(texts["validation.txt"]["content"]),
+            "design": {key: design_values.get(key, "") for key in design_keys},
+            "output": {key: output_values.get(key, "") for key in output_keys},
+            "texts": texts,
+        })
+
+    return compare_runs
 
 
 def collect_debug_texts(product_id: str):
@@ -450,6 +574,56 @@ def write_product_md(product: ProductRequest) -> Path:
     path = input_dir / "product.md"
     path.write_text("\n".join(content), encoding="utf-8")
     return path
+
+
+def update_product_from_form(
+    product: ProductRequest,
+    preset_id: str,
+    name: str,
+    category: str,
+    description: str,
+    width_mm: float | None,
+    depth_mm: float | None,
+    height_mm: float | None,
+    shape: str,
+    color: str,
+    surface: str,
+    material: str,
+    mount_type: str,
+    support_allowed: str | None,
+    cable_channels: int,
+    cable_diameter_mm: float,
+    magnet_diameter_mm: float,
+    magnet_thickness_mm: float,
+    hinge_count: int,
+    clearance_mm: float,
+    printer_targets: list[str],
+    use_gpu: str | None,
+    gpu_task: str,
+) -> None:
+    product.preset_id = preset_id
+    product.name = name
+    product.category = category
+    product.description = description
+    product.width_mm = width_mm
+    product.depth_mm = depth_mm
+    product.height_mm = height_mm
+    product.shape = shape
+    product.color = color
+    product.surface = surface
+    product.material = material
+    product.mount_type = mount_type
+    product.cable_channels = cable_channels
+    product.cable_diameter_mm = cable_diameter_mm
+    product.magnet_diameter_mm = magnet_diameter_mm
+    product.magnet_thickness_mm = magnet_thickness_mm
+    product.hinge_count = hinge_count
+    product.clearance_mm = clearance_mm
+    product.support_allowed = (support_allowed == "true")
+    product.use_gpu = (use_gpu == "true")
+    product.gpu_task = gpu_task
+    product.printer_targets = "\n".join([f"- {p}" for p in printer_targets])
+    product.updated_at = datetime.utcnow()
 
 
 def create_blender_job(product_id: str, product_obj=None, run_number: int = 1) -> str:
@@ -699,7 +873,7 @@ def create_product(
         md_path = write_product_md(product)
         run_number = 1
         output_dir = run_dir_for(product.id, run_number)
-        write_run_metadata(product, run_number, output_dir)
+        write_run_metadata(product, run_number, output_dir, trigger="create")
 
         db.add(ProductFile(
             id=str(uuid.uuid4()),
@@ -743,6 +917,150 @@ def create_product(
         db.close()
 
 
+@app.get("/products/{product_id}/edit", response_class=HTMLResponse)
+def edit_product_form(request: Request, product_id: str):
+    db = get_db()
+    try:
+        product = db.query(ProductRequest).filter(ProductRequest.id == product_id).first()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        return templates.TemplateResponse(
+            name="edit_product.html",
+            request=request,
+            context={
+                "product": product,
+            },
+        )
+    finally:
+        db.close()
+
+
+@app.post("/products/{product_id}/edit")
+def edit_product(
+    product_id: str,
+    preset_id: str = Form("custom"),
+    name: str = Form(...),
+    category: str = Form(...),
+    description: str = Form(""),
+    width_mm: float | None = Form(None),
+    depth_mm: float | None = Form(None),
+    height_mm: float | None = Form(None),
+    shape: str = Form(""),
+    color: str = Form(""),
+    surface: str = Form(""),
+    material: str = Form("PETG"),
+    mount_type: str = Form(""),
+    support_allowed: str | None = Form(None),
+    cable_channels: int = Form(1),
+    cable_diameter_mm: float = Form(6.0),
+    magnet_diameter_mm: float = Form(10.0),
+    magnet_thickness_mm: float = Form(2.0),
+    hinge_count: int = Form(3),
+    clearance_mm: float = Form(0.3),
+    printer_targets: list[str] = Form([]),
+    use_gpu: str | None = Form(None),
+    gpu_task: str = Form("none"),
+):
+    db = get_db()
+    try:
+        product = db.query(ProductRequest).filter(ProductRequest.id == product_id).first()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        update_product_from_form(
+            product=product,
+            preset_id=preset_id,
+            name=name,
+            category=category,
+            description=description,
+            width_mm=width_mm,
+            depth_mm=depth_mm,
+            height_mm=height_mm,
+            shape=shape,
+            color=color,
+            surface=surface,
+            material=material,
+            mount_type=mount_type,
+            support_allowed=support_allowed,
+            cable_channels=cable_channels,
+            cable_diameter_mm=cable_diameter_mm,
+            magnet_diameter_mm=magnet_diameter_mm,
+            magnet_thickness_mm=magnet_thickness_mm,
+            hinge_count=hinge_count,
+            clearance_mm=clearance_mm,
+            printer_targets=printer_targets,
+            use_gpu=use_gpu,
+            gpu_task=gpu_task,
+        )
+        product.status = "MD_CREATED"
+
+        write_product_md(product)
+        run_number = next_run_number(product.id)
+        output_dir = run_dir_for(product.id, run_number)
+        write_run_metadata(product, run_number, output_dir, trigger="edit")
+
+        try:
+            job_name = create_blender_job(product.id, product, run_number)
+
+            db.add(GenerationJob(
+                id=str(uuid.uuid4()),
+                product_id=product.id,
+                k8s_job_name=job_name,
+                status="QUEUED",
+                run_number=run_number,
+                output_dir=run_container_dir_for(product.id, run_number),
+            ))
+
+            product.status = "QUEUED"
+        except Exception as e:
+            db.add(GenerationJob(
+                id=str(uuid.uuid4()),
+                product_id=product.id,
+                k8s_job_name=None,
+                status="FAILED",
+                error_message=repr(e),
+                run_number=run_number,
+                output_dir=run_container_dir_for(product.id, run_number),
+            ))
+
+            product.status = "FAILED"
+
+        product.updated_at = datetime.utcnow()
+        db.commit()
+
+        return RedirectResponse(url=f"/products/{product_id}", status_code=303)
+    finally:
+        db.close()
+
+
+@app.get("/products/{product_id}/compare", response_class=HTMLResponse)
+def compare_product_runs(request: Request, product_id: str):
+    db = get_db()
+    try:
+        product = db.query(ProductRequest).filter(ProductRequest.id == product_id).first()
+        if not product:
+            raise HTTPException(status_code=404, detail="Product not found")
+
+        available = available_run_numbers(product_id)
+        selected, warnings = parse_run_selection(request.query_params.get("runs"), available)
+        compare_runs = collect_compare_runs(product_id, selected)
+
+        return templates.TemplateResponse(
+            name="product_compare.html",
+            request=request,
+            context={
+                "product": product,
+                "available_runs": list(reversed(available)),
+                "selected_runs": selected,
+                "compare_runs": compare_runs,
+                "warnings": warnings,
+            },
+        )
+    finally:
+        db.close()
+
+
 @app.get("/products/{product_id}", response_class=HTMLResponse)
 def product_detail(request: Request, product_id: str):
     db = get_db()
@@ -761,10 +1079,14 @@ def product_detail(request: Request, product_id: str):
             if target.exists():
                 for f in sorted(target.glob("*")):
                     if f.is_file():
+                        try:
+                            size = f.stat().st_size
+                        except OSError:
+                            continue
                         files.append({
                             "subdir": subdir,
                             "name": f.name,
-                            "size": f.stat().st_size,
+                            "size": size,
                             "download_url": f"/products/{product_id}/download/{subdir}/{f.name}",
                         })
 
@@ -829,10 +1151,9 @@ def rerun_product(product_id: str):
         if not product:
             raise HTTPException(status_code=404, detail="Product not found")
 
-        write_product_md(product)
         run_number = next_run_number(product.id)
         output_dir = run_dir_for(product.id, run_number)
-        write_run_metadata(product, run_number, output_dir)
+        write_run_metadata(product, run_number, output_dir, trigger="rerun")
 
         try:
             job_name = create_blender_job(product.id, product, run_number)

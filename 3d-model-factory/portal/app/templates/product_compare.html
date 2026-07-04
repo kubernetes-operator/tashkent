@@ -1,0 +1,183 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h2>Run 비교 - {{ product.name }}</h2>
+  <table>
+    <tr><th>제품 ID</th><td>{{ product.id }}</td></tr>
+    <tr><th>제품명</th><td>{{ product.name }}</td></tr>
+  </table>
+  <p>
+    <a href="/products/{{ product.id }}">상세 페이지로 돌아가기</a>
+  </p>
+</section>
+
+<section class="card">
+  <h3>Run 선택</h3>
+  {% if warnings %}
+    {% for warning in warnings %}
+      <p class="hint">{{ warning }}</p>
+    {% endfor %}
+  {% endif %}
+
+  {% if available_runs %}
+    <p class="hint">기본값은 최신 run 3개입니다. 특정 run 비교는 <code>?runs=1,2,3</code> 형식으로 지정할 수 있습니다.</p>
+    <p>
+      {% for run_number in available_runs %}
+        <a href="/products/{{ product.id }}/compare?runs={{ run_number }}">run {{ run_number }}</a>{% if not loop.last %} | {% endif %}
+      {% endfor %}
+    </p>
+    {% if selected_runs %}
+      <p>비교 중: {% for run_number in selected_runs %}run {{ run_number }}{% if not loop.last %}, {% endif %}{% endfor %}</p>
+    {% endif %}
+  {% else %}
+    <p>비교할 run이 없습니다.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h3>Preview 비교</h3>
+  {% if compare_runs %}
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px;">
+      {% for run in compare_runs %}
+      <div style="border: 1px solid #ddd; padding: 12px; background: #fafafa;">
+        <h4>run {{ run.number }}</h4>
+        {% if run.preview_exists %}
+          <img src="{{ run.preview_url }}" alt="run {{ run.number }} preview.png" style="max-width: 100%; border: 1px solid #ddd;">
+        {% else %}
+          <p>preview 없음</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p>선택된 run이 없습니다.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h3>Summary 비교</h3>
+  {% if compare_runs %}
+  <table>
+    <thead>
+      <tr>
+        <th>항목</th>
+        {% for run in compare_runs %}
+          <th>run {{ run.number }}</th>
+        {% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th>validation_status</th>
+        {% for run in compare_runs %}
+          <td>{{ run.validation_status }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>design_profile</th>
+        {% for run in compare_runs %}
+          <td>{{ run.design.design_profile or run.output.design_profile }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>material</th>
+        {% for run in compare_runs %}
+          <td>{{ run.design.material }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>dimensions</th>
+        {% for run in compare_runs %}
+          <td>{{ run.design.width_mm }} x {{ run.design.depth_mm }} x {{ run.design.height_mm }} mm</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>engine_version</th>
+        {% for run in compare_runs %}
+          <td>{{ run.design.engine_version }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>cable_channels</th>
+        {% for run in compare_runs %}
+          <td>{{ run.design.cable_channels }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>cable_diameter_mm</th>
+        {% for run in compare_runs %}
+          <td>{{ run.design.cable_diameter_mm }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>magnet_diameter_mm</th>
+        {% for run in compare_runs %}
+          <td>{{ run.design.magnet_diameter_mm }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>magnet_thickness_mm</th>
+        {% for run in compare_runs %}
+          <td>{{ run.design.magnet_thickness_mm }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>hinge_count</th>
+        {% for run in compare_runs %}
+          <td>{{ run.design.hinge_count }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>clearance_mm</th>
+        {% for run in compare_runs %}
+          <td>{{ run.design.clearance_mm }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>preview_status</th>
+        {% for run in compare_runs %}
+          <td>{{ run.output.preview_status }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>render_mode</th>
+        {% for run in compare_runs %}
+          <td>{{ run.output.render_mode }}</td>
+        {% endfor %}
+      </tr>
+      <tr>
+        <th>three_mf_status</th>
+        {% for run in compare_runs %}
+          <td>{{ run.output.three_mf_status }}</td>
+        {% endfor %}
+      </tr>
+    </tbody>
+  </table>
+  {% else %}
+    <p>요약할 run이 없습니다.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h3>상세 로그</h3>
+  {% if compare_runs %}
+    {% for run in compare_runs %}
+      <section style="margin-top: 18px;">
+        <h4>run {{ run.number }}</h4>
+        {% for filename, item in run.texts.items() %}
+          <details style="margin-top: 10px;">
+            <summary>{{ filename }}{% if not item.exists %} - 파일 없음{% endif %}{% if item.truncated %} - truncated{% endif %}</summary>
+            {% if item.exists %}
+              <pre style="white-space: pre-wrap; overflow-x: auto; border: 1px solid #ddd; padding: 12px; background: #fafafa;">{{ item.content }}</pre>
+            {% else %}
+              <p>파일 없음</p>
+            {% endif %}
+          </details>
+        {% endfor %}
+      </section>
+    {% endfor %}
+  {% else %}
+    <p>표시할 로그가 없습니다.</p>
+  {% endif %}
+</section>
+{% endblock %}
