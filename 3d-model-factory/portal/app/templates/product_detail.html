@@ -31,7 +31,9 @@
     <thead>
       <tr>
         <th>Job Name</th>
+        <th>Run</th>
         <th>Status</th>
+        <th>Output</th>
         <th>Error</th>
         <th>Created</th>
       </tr>
@@ -40,13 +42,56 @@
       {% for j in jobs %}
       <tr>
         <td>{{ j.k8s_job_name }}</td>
+        <td>{% if j.run_number %}run {{ j.run_number }}{% else %}-{% endif %}</td>
         <td>{{ j.status }}</td>
+        <td>{{ j.output_dir or '' }}</td>
         <td>{{ j.error_message }}</td>
         <td>{{ j.created_at }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+</section>
+
+<section class="card">
+  <h3>Run 이력</h3>
+  {% if runs %}
+  <table>
+    <thead>
+      <tr>
+        <th>Run</th>
+        <th>Preview</th>
+        <th>Validation</th>
+        <th>STL</th>
+        <th>3MF</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      <tr>
+        <td>
+          run {{ run.number }}
+          {% if run.is_latest %}
+            <strong>latest</strong>
+          {% endif %}
+        </td>
+        {% for f in run.files %}
+        <td>
+          {% if f.exists %}
+            <a href="{{ f.download_url }}">{{ f.name }}</a>
+            {% if f.size is not none %}<br><small>{{ f.size }} bytes</small>{% endif %}
+          {% else %}
+            <span>{{ f.name }}</span><br><small>파일 없음</small>
+          {% endif %}
+        </td>
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>아직 run 결과가 없습니다.</p>
+  {% endif %}
 </section>
 
 

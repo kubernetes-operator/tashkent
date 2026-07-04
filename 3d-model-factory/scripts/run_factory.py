@@ -3,6 +3,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 FLOW_VERSION = "run_factory-v21-product-md-flow"
@@ -24,6 +25,48 @@ def optional_call(cmd, label: str):
     return rc
 
 
+def write_run_metadata(run_dir: Path, product_id: str, product_md: Path | None, use_gpu: str, gpu_task: str):
+    if not product_id:
+        return
+
+    run_number = os.environ.get("RUN_NUMBER", "").strip() or run_dir.name
+    lines = [
+        f"product_id={product_id}",
+        f"run_number={run_number}",
+        f"created_at={datetime.utcnow().isoformat()}Z",
+        f"product_md_path={product_md or ''}",
+        f"output_dir={run_dir}",
+        f"image={os.environ.get('WORKER_IMAGE', '').strip()}",
+        f"use_gpu={use_gpu}",
+        f"gpu_task={gpu_task}",
+    ]
+    (run_dir / "run_metadata.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def copy_latest_output(run_dir: Path, product_id: str):
+    if not product_id:
+        return
+
+    product_root = run_dir.parent.parent if run_dir.parent.name == "runs" else Path(f"/data/products/{product_id}")
+    latest_dir = product_root / "output"
+    if latest_dir.resolve() == run_dir.resolve():
+        return
+
+    if latest_dir.exists() or latest_dir.is_symlink():
+        if latest_dir.is_dir() and not latest_dir.is_symlink():
+            shutil.rmtree(latest_dir)
+        else:
+            latest_dir.unlink()
+
+    latest_dir.mkdir(parents=True, exist_ok=True)
+    for item in run_dir.iterdir():
+        target = latest_dir / item.name
+        if item.is_dir():
+            shutil.copytree(item, target, dirs_exist_ok=True)
+        elif item.is_file():
+            shutil.copy2(item, target)
+
+
 def main():
     product_id = os.environ.get("PRODUCT_ID", "").strip()
     product_md_env = os.environ.get("PRODUCT_MD", "").strip()
@@ -40,6 +83,7 @@ def main():
         product_md = Path(product_md_env) if product_md_env else None
 
     run_dir.mkdir(parents=True, exist_ok=True)
+    write_run_metadata(run_dir, product_id, product_md, use_gpu, gpu_task)
 
     debug_lines = [
         f"worker_flow_version={FLOW_VERSION}",
@@ -149,6 +193,8 @@ def main():
         f.write(f"input_product_md_copy_exists={(run_dir / 'input_product.md').exists()}\n")
         f.write(f"design_metadata_exists={(run_dir / 'design_metadata.txt').exists()}\n")
         f.write(f"model_stl_exists={stl_path.exists()}\n")
+
+    copy_latest_output(run_dir, product_id)
 
     log("[INFO] Factory job completed")
     log(f"[INFO] Output: {run_dir}")

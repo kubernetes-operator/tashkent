@@ -89,6 +89,8 @@ class GenerationJob(Base):
     k8s_job_name = Column(String)
     status = Column(String, default="QUEUED")
     error_message = Column(Text)
+    run_number = Column(Integer)
+    output_dir = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow)
 
@@ -228,6 +230,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 def startup():
     Base.metadata.create_all(bind=engine)
     ensure_product_request_parameter_columns()
+    ensure_generation_job_run_columns()
 
     try:
         config.load_incluster_config()
@@ -250,12 +253,93 @@ def ensure_product_request_parameter_columns():
             conn.execute(text(stmt))
 
 
+def ensure_generation_job_run_columns():
+    statements = [
+        "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS run_number integer",
+        "ALTER TABLE generation_jobs ADD COLUMN IF NOT EXISTS output_dir text",
+    ]
+    with engine.begin() as conn:
+        for stmt in statements:
+            conn.execute(text(stmt))
+
+
 def get_db():
     return SessionLocal()
 
 
 def product_base_dir(product_id: str) -> Path:
     return OUTPUT_DIR / "products" / product_id
+
+
+def product_container_base_dir(product_id: str) -> str:
+    return f"/data/products/{product_id}"
+
+
+def run_dir_for(product_id: str, run_number: int) -> Path:
+    return product_base_dir(product_id) / "runs" / str(run_number)
+
+
+def run_container_dir_for(product_id: str, run_number: int) -> str:
+    return f"{product_container_base_dir(product_id)}/runs/{run_number}"
+
+
+def next_run_number(product_id: str) -> int:
+    runs_dir = product_base_dir(product_id) / "runs"
+    existing = []
+    if runs_dir.exists():
+        for child in runs_dir.iterdir():
+            if child.is_dir() and child.name.isdigit():
+                existing.append(int(child.name))
+    return (max(existing) + 1) if existing else 1
+
+
+def write_run_metadata(product: ProductRequest, run_number: int, output_dir: Path) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    product_id = product.id
+    lines = [
+        f"product_id={product_id}",
+        f"run_number={run_number}",
+        f"created_at={datetime.utcnow().isoformat()}Z",
+        f"product_md_path={product_container_base_dir(product_id)}/input/product.md",
+        f"output_dir={run_container_dir_for(product_id, run_number)}",
+        f"image={WORKER_IMAGE}",
+        f"use_gpu={'true' if product.use_gpu else 'false'}",
+        f"gpu_task={product.gpu_task or 'none'}",
+    ]
+    path = output_dir / "run_metadata.txt"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def collect_runs(product_id: str):
+    runs_dir = product_base_dir(product_id) / "runs"
+    run_numbers = []
+    if runs_dir.exists():
+        for child in runs_dir.iterdir():
+            if child.is_dir() and child.name.isdigit():
+                run_numbers.append(int(child.name))
+
+    latest_run_number = max(run_numbers) if run_numbers else None
+    run_files = ["preview.png", "validation.txt", "model.stl", "model.3mf"]
+    runs = []
+    for run_number in sorted(run_numbers):
+        run_dir = runs_dir / str(run_number)
+        files = []
+        for name in run_files:
+            path = run_dir / name
+            files.append({
+                "name": name,
+                "exists": path.exists() and path.is_file(),
+                "size": path.stat().st_size if path.exists() and path.is_file() else None,
+                "download_url": f"/products/{product_id}/download/runs/{run_number}/{name}",
+            })
+
+        runs.append({
+            "number": run_number,
+            "is_latest": run_number == latest_run_number,
+            "files": files,
+        })
+    return runs
 
 
 def read_limited_text(path: Path, limit: int = DEBUG_TEXT_LIMIT) -> tuple[str | None, bool]:
@@ -368,7 +452,7 @@ def write_product_md(product: ProductRequest) -> Path:
     return path
 
 
-def create_blender_job(product_id: str, product_obj=None) -> str:
+def create_blender_job(product_id: str, product_obj=None, run_number: int = 1) -> str:
     current_product_for_job = product_obj
     batch = client.BatchV1Api()
 
@@ -387,7 +471,9 @@ def create_blender_job(product_id: str, product_obj=None) -> str:
         env=[
             client.V1EnvVar(name="PRODUCT_ID", value=product_id),
             client.V1EnvVar(name="PRODUCT_MD", value=f"/data/products/{product_id}/input/product.md"),
-            client.V1EnvVar(name="OUTPUT_DIR", value=f"/data/products/{product_id}/output"),
+            client.V1EnvVar(name="OUTPUT_DIR", value=run_container_dir_for(product_id, run_number)),
+            client.V1EnvVar(name="RUN_NUMBER", value=str(run_number)),
+            client.V1EnvVar(name="WORKER_IMAGE", value=WORKER_IMAGE),
             client.V1EnvVar(name="USE_GPU", value="true" if getattr(current_product_for_job, "use_gpu", False) else "false"),
             client.V1EnvVar(name="GPU_TASK", value=getattr(current_product_for_job, "gpu_task", "none") or "none"),
         ],
@@ -611,6 +697,9 @@ def create_product(
         db.commit()
 
         md_path = write_product_md(product)
+        run_number = 1
+        output_dir = run_dir_for(product.id, run_number)
+        write_run_metadata(product, run_number, output_dir)
 
         db.add(ProductFile(
             id=str(uuid.uuid4()),
@@ -621,13 +710,15 @@ def create_product(
         ))
 
         try:
-            job_name = create_blender_job(product.id, product)
+            job_name = create_blender_job(product.id, product, run_number)
 
             db.add(GenerationJob(
                 id=str(uuid.uuid4()),
                 product_id=product.id,
                 k8s_job_name=job_name,
                 status="QUEUED",
+                run_number=run_number,
+                output_dir=run_container_dir_for(product.id, run_number),
             ))
 
             product.status = "QUEUED"
@@ -639,6 +730,8 @@ def create_product(
                 k8s_job_name=None,
                 status="FAILED",
                 error_message=repr(e),
+                run_number=run_number,
+                output_dir=run_container_dir_for(product.id, run_number),
             ))
 
             product.status = "FAILED"
@@ -680,6 +773,7 @@ def product_detail(request: Request, product_id: str):
         ).order_by(GenerationJob.created_at.desc()).all()
 
         debug_texts, validation_status = collect_debug_texts(product_id)
+        runs = collect_runs(product_id)
 
         return templates.TemplateResponse(
             name="product_detail.html",
@@ -690,6 +784,7 @@ def product_detail(request: Request, product_id: str):
                 "jobs": jobs,
                 "debug_texts": debug_texts,
                 "validation_status": validation_status,
+                "runs": runs,
             },
         )
     finally:
@@ -700,10 +795,27 @@ def product_detail(request: Request, product_id: str):
 def download_file(product_id: str, subdir: str, filename: str):
     if subdir not in ["input", "output", "logs"]:
         raise HTTPException(status_code=400, detail="Invalid subdir")
+    if filename != Path(filename).name:
+        raise HTTPException(status_code=400, detail="Invalid filename")
 
     path = product_base_dir(product_id) / subdir / filename
 
     if not path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    return FileResponse(path, filename=filename)
+
+
+@app.get("/products/{product_id}/download/runs/{run_number}/{filename}")
+def download_run_file(product_id: str, run_number: int, filename: str):
+    if run_number < 1:
+        raise HTTPException(status_code=400, detail="Invalid run number")
+    if filename != Path(filename).name:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+
+    path = run_dir_for(product_id, run_number) / filename
+
+    if not path.exists() or not path.is_file():
         raise HTTPException(status_code=404, detail="File not found")
 
     return FileResponse(path, filename=filename)
@@ -718,15 +830,20 @@ def rerun_product(product_id: str):
             raise HTTPException(status_code=404, detail="Product not found")
 
         write_product_md(product)
+        run_number = next_run_number(product.id)
+        output_dir = run_dir_for(product.id, run_number)
+        write_run_metadata(product, run_number, output_dir)
 
         try:
-            job_name = create_blender_job(product.id, product)
+            job_name = create_blender_job(product.id, product, run_number)
 
             db.add(GenerationJob(
                 id=str(uuid.uuid4()),
                 product_id=product.id,
                 k8s_job_name=job_name,
                 status="QUEUED",
+                run_number=run_number,
+                output_dir=run_container_dir_for(product.id, run_number),
             ))
 
             product.status = "QUEUED"
@@ -736,6 +853,8 @@ def rerun_product(product_id: str):
                 product_id=product.id,
                 status="FAILED",
                 error_message=repr(e),
+                run_number=run_number,
+                output_dir=run_container_dir_for(product.id, run_number),
             ))
 
             product.status = "FAILED"
