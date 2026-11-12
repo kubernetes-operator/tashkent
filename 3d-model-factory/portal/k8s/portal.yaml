@@ -34,6 +34,10 @@ spec:
           volumeMounts:
             - name: model-storage
               mountPath: /data
+          resources:
+            requests:
+              cpu: 5m
+              memory: 123Mi
       volumes:
         - name: model-storage
           persistentVolumeClaim:
